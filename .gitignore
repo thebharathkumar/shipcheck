@@ -7,3 +7,4 @@ dist/
 # Approvals recorded while trying the CLI locally. The committed example lives in examples/.
 /approvals.jsonl
 /runs/
+.ruff_cache/
