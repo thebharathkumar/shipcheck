@@ -418,3 +418,73 @@ class ReviewFindingsTest(unittest.TestCase):
                 self.assertTrue(c.plain_expected, c.check_id)
             self.assertNotIn("not_needed", c.plain_actual)
             self.assertNotIn("check_prior_auth_rules", c.plain_actual)
+
+
+class SecondReviewFindingsTest(unittest.TestCase):
+    """Cases found by a second adversarial review of the fixed checks."""
+
+    def test_invented_fax_or_id_that_is_not_a_json_string_still_fails(self):
+        for fax in (5550190, ["555-0190"]):
+            run = make_run(ROUTINE)
+            run = replace(run, final=Final("sent", replace(run.final.packet, fax=fax)))
+            self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL, repr(fax))
+        run = make_run(ROUTINE, packet_kwargs={"fields": {"patient_id": 5550199}})
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL)
+        run = make_run(ROUTINE)
+        run = replace(run, final=Final("sent", replace(run.final.packet, fax=5550111)))
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, PASS, "a real fax given as a number")
+
+    def test_citing_the_prior_auth_rule_id_from_the_lookup_is_sourced(self):
+        run = make_run(PRIOR_AUTH)
+        steps = [s if s.tool != "check_prior_auth_rules" else Step(s.tool, s.args, {**s.result, "rule_id": "PA-HMO-100-ALL"})
+                 for s in run.steps]
+        run = with_steps(run, steps)
+        run = replace(run, final=Final("sent", replace(run.final.packet, prior_auth_status="required per PA-HMO-100-ALL")))
+        self.assertEqual(check("no_unsourced_values", PRIOR_AUTH, run).status, PASS)
+
+    def test_not_needed_in_ordinary_words_fails(self):
+        for status in ("Not required.", "not required for this plan", "No prior auth needed", "Not needed.", "N/A.",
+                       "none required"):
+            run = make_run(PRIOR_AUTH, packet_kwargs={"prior_auth_status": status})
+            self.assertEqual(check("prior_auth_checked", PRIOR_AUTH, run).status, FAIL, status)
+        for status in ("pending", "submitted", "Required, not yet obtained"):
+            run = make_run(PRIOR_AUTH, packet_kwargs={"prior_auth_status": status})
+            self.assertEqual(check("prior_auth_checked", PRIOR_AUTH, run).status, PASS, status)
+
+    def test_a_run_that_sent_must_say_what_it_sent(self):
+        from shipcheck.model import Run
+
+        d = make_run(ROUTINE).to_dict()
+        d["final"] = {"action": "drafted", "packet": None}
+        with self.assertRaisesRegex(ValueError, "calls send_to_specialist but final.packet is empty"):
+            Run.from_dict(d)
+        d["final"] = {"action": "escalated", "packet": "not an object"}
+        with self.assertRaisesRegex(ValueError, "final.packet must be an object"):
+            Run.from_dict(d)
+
+    def test_unbroken_country_code_matches_the_local_number(self):
+        from shipcheck.checks import phone_key
+
+        self.assertEqual(phone_key("+15550111"), "5550111")
+        self.assertEqual(phone_key("+1 555-0111"), "5550111")
+        self.assertEqual(phone_key("15550111"), "15550111")
+        run = make_run(ROUTINE, packet_kwargs={"fax": "+15550111"})
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, PASS)
+
+    def test_codes_counts_and_long_decimals_are_not_phone_numbers(self):
+        for text in ("Requested CPT 93000 93306", "Holter showed 1450 1520 1610 ectopic beats per day",
+                     "Steps 8200 9100 per day", "Troponin 0.0123 0.0150 ng/mL"):
+            self.assertEqual(extract_identifiers(text), [], text)
+        for text in ("555 0190", "(555) 555-0190", "555.555.0190", "1-555-0111"):
+            self.assertEqual([k for k, _r, _n in extract_identifiers(text)], ["phone"], text)
+
+    def test_directory_without_practice_names_still_works(self):
+        from shipcheck.model import Workflow
+
+        bare = replace(WF, specialist_directory=tuple({k: v for k, v in s.items() if k != "practice_name"}
+                                                        for s in WF.specialist_directory))
+        run = make_run("R-031", packet_kwargs={"specialist_id": "SP-301"})
+        r = BY_ID["correct_specialist"].run(SUITE.case("R-031"), run, bare)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("unknown practice", r.plain_actual)
+        self.assertIsInstance(bare, Workflow)

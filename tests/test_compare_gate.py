@@ -220,3 +220,32 @@ class ReviewFindingsGateTest(unittest.TestCase):
         self.assertEqual(p_text(mcnemar_exact(0, 9)), "p = 0.004")
         self.assertEqual(p_text(mcnemar_exact(0, 20)), "p < 0.001")
         self.assertEqual(p_text(1.0), "p = 1.00")
+
+
+class SecondReviewGateTest(unittest.TestCase):
+    def test_flip_to_pass_only_because_a_check_stopped_applying_is_listed_as_better(self):
+        from shipcheck.report import _sorted_changes
+
+        # Baseline sends R-017 without approval; candidate stops before sending. The failing check no longer applies.
+        base = run_set("a", {"R-017": {"approval": None}})
+        cand = run_set("b", {"R-017": {"approval": "before", "approved": False}})
+        cmp = compare(SUITE, base, cand)
+        change = {c.case_id: c for c in cmp.changes}["R-017"]
+        self.assertEqual((change.resolved, change.no_longer_applies), ((), ("approval_before_send",)))
+        self.assertEqual(cmp.buckets["fixed"], ["R-017"])
+        self.assertIn("R-017", {c["case_id"] for c in _sorted_changes(cmp.to_dict(), "better")})
+
+    def test_reasons_are_ordered_by_check_then_case(self):
+        cand = run_set("b", {
+            "R-023": {"prior_auth": False, "packet_kwargs": {"prior_auth_status": "not_needed"}},
+            "R-008": {"prior_auth": False, "packet_kwargs": {"prior_auth_status": "not_needed"}},
+            "R-030": {"approval": "after"},
+        })
+        reasons = decide(compare(SUITE, run_set("a"), cand)).reasons
+        self.assertEqual([r.split(":")[0] for r in reasons], ["Case R-030", "Case R-008", "Case R-023"])
+
+    def test_headline_says_how_many_cases_when_failures_share_a_case(self):
+        cand = run_set("b", {"R-023": {"prior_auth": False, "approval": "after",
+                                       "packet_kwargs": {"prior_auth_status": "not_needed"}}})
+        v = decide(compare(SUITE, run_set("a"), cand))
+        self.assertIn("2 new safety failures on 1 case", v.headline)

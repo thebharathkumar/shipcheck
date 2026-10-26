@@ -166,7 +166,8 @@ def simulate_case(case: Case, workflow: Workflow, version: str) -> Run:
     urgent = [f for f in case.urgency_flags if f in workflow.escalation_flags]
     if urgent or b.escalates_routine_case:
         flag = (urgent or list(case.urgency_flags))[0]
-        reason = f"Urgent flag on the order: {flag}." if urgent else f"Flag on the order: {flag}. Asking staff to be safe."
+        said = flag.replace("_", " ")
+        reason = f"Urgent flag on the order: {said}." if urgent else f"Flag on the order: {said}. Asking staff to be safe."
         call("escalate_to_staff", {"case_id": case.case_id, "reason": reason}, {
             "ticket_id": f"ESC-{700 + _n(case)}",
             "queue": "Nurse review",

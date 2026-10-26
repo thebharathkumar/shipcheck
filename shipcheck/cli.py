@@ -127,6 +127,12 @@ def cmd_compare(args) -> int:
     simulated = all(isinstance(r, dict) and r.get("simulated") for r in (raw_b, raw_c))
     out = Path(args.out)
     results_path = Path(args.results) if args.results else out.with_suffix(".json")
+    inputs = {Path(x).resolve() for x in (args.baseline, args.candidate, args.rates) if x}
+    for target in (out, results_path):
+        if target.resolve() in inputs:
+            print(f"error: writing {target} would overwrite an input file; pass a different --out or --results",
+                  file=sys.stderr)
+            return 2
     doc = build_results(suite, {b: base_runs, c: cand_runs}, [(b, c)], rates, descriptions, simulated,
                         results_path=_display_path(results_path))
     _write_json(results_path, doc)

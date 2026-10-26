@@ -299,3 +299,34 @@ class CliReviewFindingsTest(unittest.TestCase):
                                "--results", str(ROOT / "examples" / "results.json"), "--ledger", str(self.dir / "a.jsonl"))
         self.assertEqual(code, 2)
         self.assertFalse((self.dir / "a.jsonl").exists())
+
+
+class CliSecondReviewTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_compare_refuses_to_overwrite_an_input(self):
+        import shutil
+
+        for v in ("v1", "v3"):
+            shutil.copy(ROOT / "examples" / "runs" / f"{v}.json", self.dir / f"{v}.json")
+        before = (self.dir / "v3.json").read_bytes()
+        code, _, err = run_cli("compare", "--suite", str(ROOT / "suites" / "referral_coordinator"),
+                               "--baseline", str(self.dir / "v1.json"), "--candidate", str(self.dir / "v3.json"),
+                               "--out", str(self.dir / "v3.html"))
+        self.assertEqual(code, 2)
+        self.assertIn("would overwrite an input", err)
+        self.assertEqual((self.dir / "v3.json").read_bytes(), before)
+
+    def test_wrapped_simulated_file_against_a_plain_list_is_not_called_simulated(self):
+        wrapped = ROOT / "examples" / "runs" / "v1.json"
+        plain = self.dir / "v2.json"
+        plain.write_text(json.dumps(json.loads((ROOT / "examples" / "runs" / "v2.json").read_text())["runs"]))
+        code, _, _ = run_cli("compare", "--suite", str(ROOT / "suites" / "referral_coordinator"),
+                             "--baseline", str(wrapped), "--candidate", str(plain), "--out", str(self.dir / "r.html"))
+        self.assertEqual(code, 0)
+        self.assertFalse(json.loads((self.dir / "r.json").read_text())["simulated"])

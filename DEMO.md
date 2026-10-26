@@ -45,4 +45,4 @@ Notes for the presenter:
 
 - Say "at example rates" when quoting cost. The rate card is invented and labelled EXAMPLE RATES, NOT REAL PRICES.
 - If asked about the pass rates: with 40 cases the ranges are wide, and the gate does not rely on them. It relies on which cases got worse.
-- To reset the log between takes, delete `approvals.jsonl` at the repo root. It is ignored by git.
+- To reset between takes, delete `approvals.jsonl` at the repo root (it is ignored by git) and reopen `examples/report.html` without `#v3-vs-v1` at the end of the address, so it opens on v2 vs v1 again.

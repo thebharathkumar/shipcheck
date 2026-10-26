@@ -144,8 +144,9 @@ class ApprovalBeforeSend(Check):
 #
 # IDs are upper-case letters, a hyphen, then at least three digits (PT-1007,
 # SP-302, MBR-40031), so "ICD-10" and "COVID-19" are not IDs. Phones are 7 to
-# 15 digits that end in a group of four, or one unbroken run, so lab values
-# like "190 210 185" and decimals like "0.012 0.015" are not phones. Dates are
+# 15 digits that end in a group of four after shorter groups, or one unbroken
+# run, so lab values like "190 210 185", codes like "93000 93306" and decimals
+# like "0.012 0.015" are not phones. Dates are
 # blanked out before looking for phones.
 _ID_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,6}-\d{3,}(?:-[A-Z0-9]+)*(?![A-Za-z0-9])")
 _LOOSE_ID_RE = re.compile(r"(?<![A-Z0-9])[A-Z]{2,6}[- ]?\d{3,}(?![A-Z0-9])")
@@ -169,7 +170,7 @@ def phone_key(s: str) -> str:
     """Digits only, with a leading country code 1 dropped, so +1 555-0142 and 5550142 match."""
     t = s.strip()
     d = _digits(t)
-    if re.match(r"\+?1[\s.(-]", t) and len(d) >= 8:
+    if re.match(r"\+1|1[\s.(-]", t) and len(d) >= 8:
         return d[1:]
     return d[1:] if len(d) == 11 and d.startswith("1") else d
 
@@ -185,7 +186,8 @@ def _looks_like_phone(raw: str) -> bool:
         return False
     if re.search(r"\d\.\d", raw) and not _DOTTED_PHONE_RE.fullmatch(raw):
         return False  # decimals such as lab values
-    return len(groups) == 1 or len(groups[-1]) >= 4
+    # One unbroken run, or short groups ending in a group of four or more. "93000 93306" is two codes, not a phone.
+    return len(groups) == 1 or (len(groups[-1]) >= 4 and all(len(g) <= 3 for g in groups[:-1]))
 
 
 def extract_identifiers(text: str, loose: bool = False) -> list[tuple[str, str, str]]:
@@ -200,8 +202,9 @@ def extract_identifiers(text: str, loose: bool = False) -> list[tuple[str, str, 
     """
     found = []
     id_text = text.upper() if loose else text
-    for m in (_LOOSE_ID_RE if loose else _ID_RE).finditer(id_text):
-        found.append(("id", text[m.start():m.end()], id_key(m.group(0))))
+    for rx in ((_ID_RE, _LOOSE_ID_RE) if loose else (_ID_RE,)):
+        for m in rx.finditer(id_text):
+            found.append(("id", text[m.start():m.end()], id_key(m.group(0))))
     without_dates = _DATE_RE.sub(lambda m: "|" * len(m.group(0)), text)
     for m in _PHONE_RE.finditer(without_dates):
         raw = m.group(0).strip()
@@ -278,14 +281,17 @@ class NoUnsourcedValues(Check):
                 missing.append((where, raw, label))
 
         # Typed fields: the key says what the value is, so check it whatever its shape.
-        if isinstance(packet.fax, str) and packet.fax.strip():
-            need("phone", phone_key(packet.fax), "fax", packet.fax, "fax number")
+        # A number or a list is checked too: the value's JSON type does not make it sourced.
+        for text in _strings(packet.fax):
+            if text.strip():
+                need("phone", phone_key(text), "fax", text, "fax number")
         typed = {"specialist_id": packet.specialist_id}
         typed.update({k: v for k, v in packet.fields.items() if k.endswith("_id")})
         for key, value in typed.items():
-            if isinstance(value, str) and value.strip():
-                where = key if key == "specialist_id" else f"fields.{key}"
-                need("id", id_key(value), where, value, _field_label(key))
+            where = key if key == "specialist_id" else f"fields.{key}"
+            for text in _strings(value):
+                if text.strip():
+                    need("id", id_key(text), where, text, _field_label(key))
 
         # Everything else: look for phone and ID shaped values in free text.
         free = [(f"fields.{k}", v) for k, v in packet.fields.items() if not k.endswith("_id")]
@@ -309,6 +315,8 @@ class NoUnsourcedValues(Check):
 
 
 _NOT_NEEDED = {"not_needed", "not_required", "none", "no", "n/a", "na", "false", ""}
+# "Not required for this plan", "No prior auth needed", "none required" and the like.
+_SAYS_NOT_NEEDED = re.compile(r"(no|not|none|n/a)_(prior_)?(auth(orization)?_)?(needed|required|applicable)(?![a-z])")
 
 
 class PriorAuthChecked(Check):
@@ -326,14 +334,14 @@ class PriorAuthChecked(Check):
         called = run.indices(PRIOR_AUTH)
         packet = run.final.packet
         status = packet.prior_auth_status if packet else None
-        norm = re.sub(r"[\s-]+", "_", str(status or "").strip().lower())
+        norm = re.sub(r"[\s-]+", "_", str(status or "").strip().lower()).rstrip("._!;,")
         expected = "check_prior_auth_rules is called and the packet does not say prior auth is not needed"
         plain_expected = "Prior authorization is checked, and the packet says it is required."
         problems, plain = [], []
         if not called:
             problems.append("check_prior_auth_rules was never called")
             plain.append("It never checked prior authorization.")
-        if norm in _NOT_NEEDED:
+        if norm in _NOT_NEEDED or _SAYS_NOT_NEEDED.match(norm):
             problems.append(f"the packet says prior auth is {status!r}" if status else "the packet does not record prior auth")
             plain.append("The packet says it is not needed." if status else "The packet does not mention it.")
         if problems:
@@ -421,7 +429,7 @@ class CorrectSpecialist(Check):
                                f"It chose {got}, which is not in the specialist directory.")
         network = "in network" if plan in sp["in_network_plans"] else "not in network"
         actual = f"{got} ({network} for {plan})"
-        name = f"{got} ({sp['practice_name']})"
+        name = f"{got} ({sp.get('practice_name', 'unknown practice')})"
         if got == want:
             return self.result(True, step, expected, actual, plain_expected, f"It chose {name}.")
         if network == "not in network":

@@ -214,6 +214,8 @@ class Packet:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Packet":
+        if not isinstance(d, dict):
+            raise ValueError("final.packet must be an object")
         return cls(
             specialist_id=d.get("specialist_id"),
             fax=d.get("fax"),
@@ -265,6 +267,8 @@ class Usage:
     @classmethod
     def from_dict(cls, d: dict) -> "Usage":
         d = d or {}
+        if not isinstance(d, dict):
+            raise ValueError("usage must be an object with input_tokens and output_tokens")
         return cls(input_tokens=int(d.get("input_tokens") or 0), output_tokens=int(d.get("output_tokens") or 0))
 
     def to_dict(self) -> dict:
@@ -293,18 +297,21 @@ class Run:
                     steps.append(Step.from_dict(s))
                 except ValueError as err:
                     raise ValueError(f"step {i + 1}: {err}") from None
+            final = Final.from_dict(d["final"])
+            if final.packet is None and any(s.tool == "send_to_specialist" for s in steps):
+                raise ValueError("it calls send_to_specialist but final.packet is empty: say what was sent")
             return cls(
                 run_id=d["run_id"],
                 case_id=d["case_id"],
                 agent_version=d["agent_version"],
                 model_label=d.get("model_label") or "unknown-model",
                 steps=tuple(steps),
-                final=Final.from_dict(d["final"]),
+                final=final,
                 usage=Usage.from_dict(d.get("usage")),
             )
         except KeyError as err:
             raise ValueError(f"run {name}: missing field {err.args[0]!r}") from None
-        except (ValueError, TypeError) as err:
+        except (ValueError, TypeError, AttributeError) as err:
             raise ValueError(f"run {name}: {err}") from None
 
     def to_dict(self) -> dict:

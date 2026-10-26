@@ -373,7 +373,7 @@ def _decision(cmp: dict) -> str:
     <pre tabindex="-1"><code></code></pre>
     <button type="button" class="btn btn-small copy">Copy command</button>
   </div>
-  <p class="sr-only cmd-status" aria-live="polite"></p>
+  <p class="hint cmd-status" aria-live="polite"></p>
 </section>"""
 
 
@@ -714,7 +714,7 @@ section { margin: 0 0 28px; }
 .sev { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; border-radius: 4px; padding: 1px 6px; border: 1px solid; }
 .sev-safety { color: var(--safety); }
 .sev-quality { color: var(--quality); }
-.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 8px; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-top: 8px; }
 .col-h { font-weight: 600; font-size: .85rem; color: var(--muted); margin: 0 0 4px; }
 .steps { list-style: none; margin: 0; padding: 0; font-size: .88rem; }
 .steps li { display: flex; gap: 8px; padding: 3px 6px; border-radius: 6px; }

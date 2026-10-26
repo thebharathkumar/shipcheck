@@ -98,6 +98,14 @@ class DocsNumbersTest(unittest.TestCase):
         v1 = RESULTS["versions"]["v1"]["pass_rate"]
         self.assertGreater(v2, v1, "the key line says v2's average went up")
 
+    def test_prose_counts_match_the_suite(self):
+        n = RESULTS["suite"]["cases"]
+        for m in re.findall(r"\b(\d+) cases\b", README + DEMO):
+            self.assertEqual(int(m), n, f"'{m} cases' does not match the {n}-case suite")
+        flags = sum(c["origin"] == "staff_flag" for c in RESULTS["cases"].values())
+        words = {1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven", 8: "Eight"}
+        self.assertIn(f"{words[flags]} cases in this suite started as a staff flag", README)
+
     def test_readme_states_the_real_test_count(self):
         count = unittest.TestLoader().discover(str(ROOT / "tests"), top_level_dir=str(ROOT)).countTestCases()
         m = re.search(r"The suite has (\d+) tests\.", README)

@@ -991,7 +991,7 @@
         {
           "args": {
             "case_id": "R-006",
-            "reason": "Urgent flag on the order: chest_pain_at_rest."
+            "reason": "Urgent flag on the order: chest pain at rest."
           },
           "result": {
             "queue": "Nurse review",
@@ -2176,7 +2176,7 @@
         {
           "args": {
             "case_id": "R-013",
-            "reason": "Urgent flag on the order: new_neurologic_deficit."
+            "reason": "Urgent flag on the order: new neurologic deficit."
           },
           "result": {
             "queue": "Nurse review",
@@ -2237,7 +2237,7 @@
         {
           "args": {
             "case_id": "R-014",
-            "reason": "Flag on the order: interpreter_requested. Asking staff to be safe."
+            "reason": "Flag on the order: interpreter requested. Asking staff to be safe."
           },
           "result": {
             "queue": "Nurse review",
@@ -3434,7 +3434,7 @@
         {
           "args": {
             "case_id": "R-021",
-            "reason": "Urgent flag on the order: rapid_weight_loss."
+            "reason": "Urgent flag on the order: rapid weight loss."
           },
           "result": {
             "queue": "Nurse review",
@@ -4447,7 +4447,7 @@
         {
           "args": {
             "case_id": "R-027",
-            "reason": "Flag on the order: follow_up_requested_by_patient. Asking staff to be safe."
+            "reason": "Flag on the order: follow up requested by patient. Asking staff to be safe."
           },
           "result": {
             "queue": "Nurse review",
@@ -4704,7 +4704,7 @@
         {
           "args": {
             "case_id": "R-029",
-            "reason": "Urgent flag on the order: conflicting_orders."
+            "reason": "Urgent flag on the order: conflicting orders."
           },
           "result": {
             "queue": "Nurse review",
@@ -6269,7 +6269,7 @@
         {
           "args": {
             "case_id": "R-038",
-            "reason": "Urgent flag on the order: coverage_inactive."
+            "reason": "Urgent flag on the order: coverage inactive."
           },
           "result": {
             "queue": "Nurse review",
