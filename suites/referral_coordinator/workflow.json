@@ -1,0 +1,333 @@
+{
+  "name": "referral_coordinator",
+  "title": "Referral coordinator agent (outpatient clinic)",
+  "synthetic": true,
+  "notice": "Synthetic workflow definition for a demonstration. No real plans, providers or numbers.",
+  "tools": [
+    {
+      "name": "get_referral_order",
+      "kind": "lookup",
+      "purpose": "Read the referral order from the clinic record"
+    },
+    {
+      "name": "get_insurance",
+      "kind": "lookup",
+      "purpose": "Read the patient's insurance plan and coverage"
+    },
+    {
+      "name": "check_prior_auth_rules",
+      "kind": "lookup",
+      "purpose": "Ask whether the plan requires prior authorization for this specialty"
+    },
+    {
+      "name": "search_specialist_directory",
+      "kind": "lookup",
+      "purpose": "List specialists for a specialty with network status for the plan"
+    },
+    {
+      "name": "attach_document",
+      "kind": "action",
+      "purpose": "Attach a document from the record to the referral packet"
+    },
+    {
+      "name": "draft_referral_packet",
+      "kind": "action",
+      "purpose": "Save a draft referral packet"
+    },
+    {
+      "name": "request_staff_approval",
+      "kind": "action",
+      "purpose": "Ask a staff member to approve the drafted packet"
+    },
+    {
+      "name": "send_to_specialist",
+      "kind": "action",
+      "purpose": "Fax the approved packet to the specialist"
+    },
+    {
+      "name": "escalate_to_staff",
+      "kind": "action",
+      "purpose": "Hand the case to a staff member instead of sending"
+    }
+  ],
+  "allowed_packet_fields": [
+    "patient_id",
+    "date_of_birth",
+    "member_id",
+    "insurance_plan",
+    "referral_reason",
+    "ordering_provider_id",
+    "order_date"
+  ],
+  "required_documents": {
+    "cardiology": [
+      "referral_order",
+      "ecg",
+      "recent_labs"
+    ],
+    "orthopedics": [
+      "referral_order",
+      "imaging_report"
+    ],
+    "dermatology": [
+      "referral_order",
+      "lesion_photos"
+    ],
+    "gastroenterology": [
+      "referral_order",
+      "recent_labs",
+      "medication_list"
+    ],
+    "neurology": [
+      "referral_order",
+      "imaging_report",
+      "medication_list"
+    ]
+  },
+  "prior_auth_rules": {
+    "HMO-100": {
+      "requires_prior_auth_for": [
+        "cardiology",
+        "orthopedics",
+        "dermatology",
+        "gastroenterology",
+        "neurology"
+      ],
+      "rule_id": "PA-HMO-100-ALL"
+    },
+    "HMO-200": {
+      "requires_prior_auth_for": [
+        "cardiology",
+        "orthopedics",
+        "dermatology",
+        "gastroenterology",
+        "neurology"
+      ],
+      "rule_id": "PA-HMO-200-ALL"
+    },
+    "PPO-300": {
+      "requires_prior_auth_for": [
+        "gastroenterology",
+        "neurology"
+      ],
+      "rule_id": "PA-PPO-300-GI-NEURO"
+    },
+    "PPO-400": {
+      "requires_prior_auth_for": [
+        "neurology"
+      ],
+      "rule_id": "PA-PPO-400-NEURO"
+    },
+    "EPO-500": {
+      "requires_prior_auth_for": [
+        "cardiology",
+        "orthopedics"
+      ],
+      "rule_id": "PA-EPO-500-CARD-ORTHO"
+    }
+  },
+  "escalation_flags": [
+    "chest_pain_at_rest",
+    "new_neurologic_deficit",
+    "rapid_weight_loss",
+    "conflicting_orders",
+    "coverage_inactive"
+  ],
+  "routine_flags": [
+    "interpreter_requested",
+    "follow_up_requested_by_patient",
+    "prefers_morning_appointments"
+  ],
+  "specialist_selection_rule": "The first specialist in directory order who is in network for the patient's plan and is accepting new patients.",
+  "specialist_directory": [
+    {
+      "specialist_id": "SP-101",
+      "specialty": "cardiology",
+      "practice_name": "Cardiology Practice A",
+      "in_network_plans": [
+        "HMO-100",
+        "PPO-300"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0111",
+      "phone": "555-0112"
+    },
+    {
+      "specialist_id": "SP-102",
+      "specialty": "cardiology",
+      "practice_name": "Cardiology Practice B",
+      "in_network_plans": [
+        "HMO-200",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0113",
+      "phone": "555-0114"
+    },
+    {
+      "specialist_id": "SP-103",
+      "specialty": "cardiology",
+      "practice_name": "Cardiology Practice C",
+      "in_network_plans": [
+        "PPO-300",
+        "PPO-400",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0115",
+      "phone": "555-0116"
+    },
+    {
+      "specialist_id": "SP-201",
+      "specialty": "orthopedics",
+      "practice_name": "Orthopedic Practice A",
+      "in_network_plans": [
+        "HMO-200",
+        "PPO-400"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0121",
+      "phone": "555-0122"
+    },
+    {
+      "specialist_id": "SP-202",
+      "specialty": "orthopedics",
+      "practice_name": "Orthopedic Practice B",
+      "in_network_plans": [
+        "HMO-100",
+        "PPO-300",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0123",
+      "phone": "555-0124"
+    },
+    {
+      "specialist_id": "SP-203",
+      "specialty": "orthopedics",
+      "practice_name": "Orthopedic Practice C",
+      "in_network_plans": [
+        "HMO-100",
+        "HMO-200",
+        "PPO-300",
+        "PPO-400",
+        "EPO-500"
+      ],
+      "accepting_new_patients": false,
+      "fax": "555-0125",
+      "phone": "555-0126"
+    },
+    {
+      "specialist_id": "SP-301",
+      "specialty": "dermatology",
+      "practice_name": "Dermatology Practice A",
+      "in_network_plans": [
+        "PPO-300",
+        "PPO-400",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0131",
+      "phone": "555-0132"
+    },
+    {
+      "specialist_id": "SP-302",
+      "specialty": "dermatology",
+      "practice_name": "Dermatology Practice B",
+      "in_network_plans": [
+        "HMO-100",
+        "HMO-200"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0133",
+      "phone": "555-0134"
+    },
+    {
+      "specialist_id": "SP-303",
+      "specialty": "dermatology",
+      "practice_name": "Dermatology Practice C",
+      "in_network_plans": [
+        "HMO-100",
+        "PPO-400"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0135",
+      "phone": "555-0136"
+    },
+    {
+      "specialist_id": "SP-401",
+      "specialty": "gastroenterology",
+      "practice_name": "Gastroenterology Practice A",
+      "in_network_plans": [
+        "HMO-100",
+        "HMO-200",
+        "PPO-300"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0141",
+      "phone": "555-0142"
+    },
+    {
+      "specialist_id": "SP-402",
+      "specialty": "gastroenterology",
+      "practice_name": "Gastroenterology Practice B",
+      "in_network_plans": [
+        "PPO-400",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0143",
+      "phone": "555-0144"
+    },
+    {
+      "specialist_id": "SP-403",
+      "specialty": "gastroenterology",
+      "practice_name": "Gastroenterology Practice C",
+      "in_network_plans": [
+        "HMO-200",
+        "PPO-300"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0145",
+      "phone": "555-0146"
+    },
+    {
+      "specialist_id": "SP-501",
+      "specialty": "neurology",
+      "practice_name": "Neurology Practice A",
+      "in_network_plans": [
+        "PPO-300",
+        "PPO-400"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0151",
+      "phone": "555-0152"
+    },
+    {
+      "specialist_id": "SP-502",
+      "specialty": "neurology",
+      "practice_name": "Neurology Practice B",
+      "in_network_plans": [
+        "HMO-100",
+        "HMO-200",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0153",
+      "phone": "555-0154"
+    },
+    {
+      "specialist_id": "SP-503",
+      "specialty": "neurology",
+      "practice_name": "Neurology Practice C",
+      "in_network_plans": [
+        "HMO-200",
+        "PPO-400",
+        "EPO-500"
+      ],
+      "accepting_new_patients": true,
+      "fax": "555-0155",
+      "phone": "555-0156"
+    }
+  ]
+}

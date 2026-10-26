@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shipcheck"
+version = "0.1.0"
+description = "Is this agent change safe to ship? Paired, structural evaluation of an agent change with a SHIP, REVIEW or BLOCK verdict."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Bharath Kumar Rajesh" }]
+dependencies = []
+
+[project.scripts]
+shipcheck = "shipcheck.cli:main"
+
+[tool.setuptools]
+packages = ["shipcheck"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

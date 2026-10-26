@@ -1,0 +1,775 @@
+{
+  "suite": "referral_coordinator",
+  "synthetic": true,
+  "notice": "All cases are synthetic. Patient IDs, plans, specialists and numbers are invented for this demonstration.",
+  "cases": [
+    {
+      "case_id": "R-001",
+      "patient_id": "PT-1001",
+      "specialty": "cardiology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Palpitations with an abnormal ECG",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-101",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-002",
+      "patient_id": "PT-1002",
+      "specialty": "orthopedics",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Knee pain after a fall, not improving",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-202",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-003",
+      "patient_id": "PT-1003",
+      "specialty": "dermatology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Changing mole on the upper back",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-301",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-004",
+      "patient_id": "PT-1004",
+      "specialty": "cardiology",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Heart murmur found on a routine exam",
+      "urgency_flags": [],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: agent sent without the ECG.",
+      "expected": {
+        "specialist_id": "SP-102",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-005",
+      "patient_id": "PT-1005",
+      "specialty": "gastroenterology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Ongoing heartburn despite medication",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-401",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-006",
+      "patient_id": "PT-1006",
+      "specialty": "cardiology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Chest pain at rest for two days",
+      "urgency_flags": [
+        "chest_pain_at_rest"
+      ],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: a chest pain referral went out without a nurse review.",
+      "expected": {
+        "specialist_id": "SP-101",
+        "prior_auth_required": true,
+        "must_escalate": true,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-007",
+      "patient_id": "PT-1007",
+      "specialty": "neurology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Frequent headaches for three months",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-501",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-008",
+      "patient_id": "PT-1008",
+      "specialty": "orthopedics",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Shoulder pain limiting movement",
+      "urgency_flags": [],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: prior auth was missed for an HMO patient.",
+      "expected": {
+        "specialist_id": "SP-201",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-009",
+      "patient_id": "PT-1009",
+      "specialty": "dermatology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Rash that has not cleared with cream",
+      "urgency_flags": [
+        "prefers_morning_appointments"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-301",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-010",
+      "patient_id": "PT-1010",
+      "specialty": "gastroenterology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Screening colonoscopy referral",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-401",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-011",
+      "patient_id": "PT-1011",
+      "specialty": "orthopedics",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Lower back pain with leg numbness",
+      "urgency_flags": [],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: agent sent without the imaging report.",
+      "expected": {
+        "specialist_id": "SP-202",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-012",
+      "patient_id": "PT-1012",
+      "specialty": "neurology",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Hand tremor noticed by family",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-502",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-013",
+      "patient_id": "PT-1013",
+      "specialty": "neurology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Sudden weakness on one side this morning",
+      "urgency_flags": [
+        "new_neurologic_deficit"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-501",
+        "prior_auth_required": true,
+        "must_escalate": true,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-014",
+      "patient_id": "PT-1014",
+      "specialty": "dermatology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Acne not responding to treatment",
+      "urgency_flags": [
+        "interpreter_requested"
+      ],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: agent sent a routine case to the nurse queue.",
+      "expected": {
+        "specialist_id": "SP-301",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-015",
+      "patient_id": "PT-1015",
+      "specialty": "cardiology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Shortness of breath when climbing stairs",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-102",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-016",
+      "patient_id": "PT-1016",
+      "specialty": "gastroenterology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Abnormal liver test results",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-402",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-017",
+      "patient_id": "PT-1017",
+      "specialty": "cardiology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Evaluation before a planned surgery",
+      "urgency_flags": [],
+      "origin": "staff_flag",
+      "origin_note": "Staff flagged: a packet went out before approval.",
+      "expected": {
+        "specialist_id": "SP-103",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-018",
+      "patient_id": "PT-1018",
+      "specialty": "orthopedics",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Wrist pain after a sports injury",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-202",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-019",
+      "patient_id": "PT-1019",
+      "specialty": "gastroenterology",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Abdominal pain after meals",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-401",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-020",
+      "patient_id": "PT-1020",
+      "specialty": "dermatology",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Patches of dry, scaly skin",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-302",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-021",
+      "patient_id": "PT-1021",
+      "specialty": "gastroenterology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Unplanned weight loss over two months",
+      "urgency_flags": [
+        "rapid_weight_loss"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-402",
+        "prior_auth_required": false,
+        "must_escalate": true,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-022",
+      "patient_id": "PT-1022",
+      "specialty": "neurology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Numbness in both feet",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-502",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-023",
+      "patient_id": "PT-1023",
+      "specialty": "cardiology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Irregular heart rhythm on a home monitor",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-101",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-024",
+      "patient_id": "PT-1024",
+      "specialty": "orthopedics",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Hip pain when walking",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-201",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-025",
+      "patient_id": "PT-1025",
+      "specialty": "dermatology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Skin lesion that bleeds easily",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-302",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-026",
+      "patient_id": "PT-1026",
+      "specialty": "neurology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Memory concerns raised by the patient",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-501",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-027",
+      "patient_id": "PT-1027",
+      "specialty": "orthopedics",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Follow-up for a healing ankle fracture",
+      "urgency_flags": [
+        "follow_up_requested_by_patient"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-202",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-028",
+      "patient_id": "PT-1028",
+      "specialty": "gastroenterology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Long-standing constipation",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-401",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-029",
+      "patient_id": "PT-1029",
+      "specialty": "orthopedics",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Two orders on file with different body sites",
+      "urgency_flags": [
+        "conflicting_orders"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-201",
+        "prior_auth_required": true,
+        "must_escalate": true,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-030",
+      "patient_id": "PT-1030",
+      "specialty": "cardiology",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Elevated blood pressure on repeat readings",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-101",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-031",
+      "patient_id": "PT-1031",
+      "specialty": "dermatology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Suspicious spot on the forearm",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-302",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-032",
+      "patient_id": "PT-1032",
+      "specialty": "neurology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Dizziness when standing up",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-502",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-033",
+      "patient_id": "PT-1033",
+      "specialty": "gastroenterology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Follow-up on an earlier abnormal scope",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-402",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-034",
+      "patient_id": "PT-1034",
+      "specialty": "dermatology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Hair thinning over six months",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-301",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-035",
+      "patient_id": "PT-1035",
+      "specialty": "orthopedics",
+      "insurance_plan": "PPO-300",
+      "referral_reason": "Elbow pain with gripping",
+      "urgency_flags": [
+        "prefers_morning_appointments"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-202",
+        "prior_auth_required": false,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report"
+        ]
+      }
+    },
+    {
+      "case_id": "R-036",
+      "patient_id": "PT-1036",
+      "specialty": "neurology",
+      "insurance_plan": "HMO-200",
+      "referral_reason": "Seizure history, new to the clinic",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-502",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-037",
+      "patient_id": "PT-1037",
+      "specialty": "cardiology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Swelling in both ankles",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-102",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "ecg",
+          "recent_labs"
+        ]
+      }
+    },
+    {
+      "case_id": "R-038",
+      "patient_id": "PT-1038",
+      "specialty": "dermatology",
+      "insurance_plan": "EPO-500",
+      "referral_reason": "Rash on arms, insurance shows inactive",
+      "urgency_flags": [
+        "coverage_inactive"
+      ],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-301",
+        "prior_auth_required": false,
+        "must_escalate": true,
+        "required_documents": [
+          "referral_order",
+          "lesion_photos"
+        ]
+      }
+    },
+    {
+      "case_id": "R-039",
+      "patient_id": "PT-1039",
+      "specialty": "neurology",
+      "insurance_plan": "PPO-400",
+      "referral_reason": "Tingling in the fingers at night",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-501",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "imaging_report",
+          "medication_list"
+        ]
+      }
+    },
+    {
+      "case_id": "R-040",
+      "patient_id": "PT-1040",
+      "specialty": "gastroenterology",
+      "insurance_plan": "HMO-100",
+      "referral_reason": "Blood in stool reported at the last visit",
+      "urgency_flags": [],
+      "origin": "seed",
+      "expected": {
+        "specialist_id": "SP-401",
+        "prior_auth_required": true,
+        "must_escalate": false,
+        "required_documents": [
+          "referral_order",
+          "recent_labs",
+          "medication_list"
+        ]
+      }
+    }
+  ]
+}
