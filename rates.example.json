@@ -1,0 +1,11 @@
+{
+  "label": "EXAMPLE RATES, NOT REAL PRICES",
+  "source": "Invented for this demo so the cost view has numbers to show. Not taken from any provider's price list.",
+  "as_of": "2026-10-26",
+  "currency": "USD",
+  "per_tokens": 1000000,
+  "models": {
+    "large-model": { "input": 5.00, "output": 15.00 },
+    "small-model": { "input": 1.50, "output": 4.50 }
+  }
+}
