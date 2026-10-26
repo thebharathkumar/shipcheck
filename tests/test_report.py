@@ -1,6 +1,7 @@
 import json
 import re
 import unittest
+from dataclasses import replace
 
 from shipcheck.cost import load_rate_card
 from shipcheck.report import build_results, render_html
@@ -64,9 +65,56 @@ class ReportTest(unittest.TestCase):
         self.assertIn("shipcheck rollback --candidate v2", v2["commands"]["rollback"])
 
     def test_no_em_or_en_dashes_in_the_page(self):
-        self.assertNotIn("—", self.html)
-        self.assertNotIn("–", self.html)
+        self.assertNotIn(chr(0x2014), self.html)
+        self.assertNotIn(chr(0x2013), self.html)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportReviewFindingsTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.runs = {v: simulate(SUITE, v) for v in VERSIONS}
+        cls.rates = load_rate_card(ROOT / "rates.example.json")
+
+    def page(self, pairs=(("v1", "v2"), ("v1", "v3")), rates="default", simulated=True, runs=None):
+        runs = runs or self.runs
+        doc = build_results(SUITE, runs, list(pairs), self.rates if rates == "default" else rates, simulated=simulated)
+        return doc, render_html(doc, runs).split('<script type="application/json"')[0]
+
+    def test_wide_interval_warning_is_visible(self):
+        _, body = self.page()
+        self.assertIn("With 40 cases these ranges are wide.", body)
+
+    def test_manager_view_has_no_raw_enums_or_tool_names(self):
+        _, body = self.page()
+        for panel in re.findall(r'data-view="manager" role="tabpanel".*?(?=<div class="view" data-view="engineer")', body, re.S):
+            for raw in ("not_needed", "check_prior_auth_rules", "approved: true", "medication_list", "referral_order"):
+                self.assertNotIn(raw, panel)
+        self.assertIn("It sent the packet at step 9. Staff were only asked afterwards, at step 10.", body)
+        self.assertIn("It never checked prior authorization. The packet says it is not needed.", body)
+
+    def test_missing_model_in_rate_card_is_named(self):
+        partial = replace(self.rates, models={"large-model": self.rates.models["large-model"]})
+        _, body = self.page(rates=partial)
+        self.assertIn("The rate card has no rate for small-model", body)
+        self.assertNotIn("No rate card given", body)
+
+    def test_synthetic_suite_is_labelled_even_when_runs_are_not_marked_simulated(self):
+        doc, body = self.page(simulated=False)
+        self.assertIn("Synthetic test cases.", body)
+        self.assertIn("The test cases are synthetic. No real patient data.", doc["notice"])
+
+    def test_ship_banner_does_not_say_safe(self):
+        runs = dict(self.runs, v1b=[replace(r, agent_version="v1b") for r in self.runs["v1"]])
+        _, body = self.page(pairs=[("v1", "v1b")], runs=runs)
+        self.assertIn("No regressions found", body)
+        self.assertNotIn("Safe to ship", body)
+
+    def test_got_better_and_got_worse_cover_every_flipped_case(self):
+        doc, body = self.page()
+        for cmp in doc["comparisons"]:
+            for cid in cmp["buckets"]["fixed"] + cmp["buckets"]["broken"]:
+                self.assertIn(f"<strong>Case {cid}:</strong>", body)

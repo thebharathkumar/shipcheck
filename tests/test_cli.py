@@ -169,3 +169,133 @@ class ChecksCommandTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CliReviewFindingsTest(unittest.TestCase):
+    """CLI behaviour found by an adversarial review, including mutants the first test suite let survive."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.suite = str(ROOT / "suites" / "referral_coordinator")
+        self.runs = {v: json.loads((ROOT / "examples" / "runs" / f"{v}.json").read_text()) for v in ("v1", "v2", "v3")}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def write(self, name, obj):
+        path = self.dir / name
+        path.write_text(json.dumps(obj) if not isinstance(obj, str) else obj)
+        return str(path)
+
+    def relabel(self, version, new):
+        runs = [dict(r, agent_version=new) for r in self.runs[version]["runs"]]
+        return {"agent_version": new, "runs": runs}
+
+    def compare(self, base, cand, *extra):
+        return run_cli("compare", "--suite", self.suite, "--baseline", base, "--candidate", cand,
+                       "--out", str(self.dir / "r.html"), *extra)
+
+    def test_same_agent_version_on_both_sides_is_an_error(self):
+        v1 = self.write("v1.json", self.runs["v1"])
+        code, _, err = self.compare(v1, self.write("v2.json", self.relabel("v2", "v1")))
+        self.assertEqual(code, 2)
+        self.assertIn("both have agent_version", err)
+
+    def test_plain_list_runs_files_work_and_the_page_still_says_synthetic(self):
+        b = self.write("b.json", self.runs["v1"]["runs"])
+        c = self.write("c.json", self.runs["v2"]["runs"])
+        code, out, _ = self.compare(b, c)
+        self.assertEqual(code, 0)
+        self.assertIn("v2 vs v1: BLOCK", out)
+        self.assertIn("synthetic test cases", out)
+        doc = json.loads((self.dir / "r.json").read_text())
+        self.assertFalse(doc["simulated"])
+        self.assertIn("The test cases are synthetic.", (self.dir / "r.html").read_text())
+
+    def test_ship_exits_zero_with_exit_code(self):
+        code, out, _ = self.compare(self.write("v1.json", self.runs["v1"]),
+                                    self.write("v1b.json", self.relabel("v1", "v1b")), "--exit-code")
+        self.assertEqual(code, 0)
+        self.assertIn("v1b vs v1: SHIP", out)
+
+    def test_malformed_inputs_print_an_error_not_a_traceback(self):
+        v1 = self.write("v1.json", self.runs["v1"])
+        bad_action = json.loads(json.dumps(self.runs["v2"]))
+        bad_action["runs"][0]["final"]["action"] = "faxed"
+        cases = [
+            ("compare", self.write("noruns.json", {"items": []})),
+            ("compare", self.write("action.json", bad_action)),
+            ("compare", self.write("truncated.json", '{"runs": [')),
+        ]
+        for _, cand in cases:
+            code, _, err = self.compare(v1, cand)
+            self.assertEqual(code, 2, cand)
+            self.assertTrue(err.startswith("error:"), err)
+        for results in (self.write("t.json", '{"compar'), self.write("l.json", [])):
+            code, _, err = run_cli("approve", "--candidate", "v3", "--by", "A", "--note", "n",
+                                   "--results", results, "--ledger", str(self.dir / "a.jsonl"))
+            self.assertEqual(code, 2)
+            self.assertTrue(err.startswith("error:"), err)
+        code, _, err = run_cli("approve", "--candidate", "v3", "--by", "A", "--note", "n",
+                               "--results", str(ROOT / "examples" / "results.json"), "--ledger", str(self.dir))
+        self.assertEqual(code, 2)
+
+    def test_rate_card_missing_a_field_is_a_clear_error(self):
+        rates = self.write("rates.json", {"models": {"large-model": {"input": 5}}})
+        code, _, err = self.compare(self.write("v1.json", self.runs["v1"]), self.write("v2.json", self.runs["v2"]),
+                                    "--rates", rates)
+        self.assertEqual(code, 2)
+        self.assertIn("needs numeric 'input' and 'output'", err)
+
+    def test_terminal_uses_the_rate_card_currency(self):
+        rates = json.loads((ROOT / "rates.example.json").read_text())
+        rates["currency"] = "EUR"
+        code, out, _ = self.compare(self.write("v1.json", self.runs["v1"]), self.write("v2.json", self.runs["v2"]),
+                                    "--rates", self.write("eur.json", rates))
+        self.assertEqual(code, 0)
+        self.assertIn("98.14 EUR to 29.13 EUR", out)
+        self.assertNotIn("$", out)
+
+    def test_ambiguous_baseline_must_be_named(self):
+        from shipcheck.model import load_suite, Run
+        from shipcheck.report import build_results
+
+        suite = load_suite(self.suite)
+        runs = {v: [Run.from_dict(r) for r in self.runs[v]["runs"]] for v in ("v1", "v2", "v3")}
+        results = self.write("multi.json", build_results(suite, runs, [("v2", "v3"), ("v1", "v3")]))
+        ledger_path = str(self.dir / "a.jsonl")
+        code, _, err = run_cli("approve", "--candidate", "v3", "--by", "A", "--note", "n", "--results", results,
+                               "--ledger", ledger_path)
+        self.assertEqual(code, 2)
+        self.assertIn("more than one baseline", err)
+        code, _, _ = run_cli("approve", "--candidate", "v3", "--baseline", "v1", "--by", "A", "--note", "n",
+                             "--results", results, "--ledger", ledger_path)
+        self.assertEqual(code, 0)
+        rec = ledger.read(ledger_path)[0]
+        self.assertEqual((rec["baseline"], rec["verdict"], rec["note"]), ("v1", "REVIEW", "n"))
+
+    def test_head_flag_catches_deleted_records(self):
+        ledger_path = self.dir / "a.jsonl"
+        results = str(ROOT / "examples" / "results.json")
+        for note in ("first", "second"):
+            run_cli("approve", "--candidate", "v3", "--by", "A", "--note", note, "--results", results,
+                    "--ledger", str(ledger_path))
+        head = ledger.read(ledger_path)[-1]["hash"]
+        ledger_path.write_text(ledger_path.read_text().splitlines()[0] + "\n")
+        code, out, _ = run_cli("verify-ledger", "--ledger", str(ledger_path))
+        self.assertEqual(code, 0)
+        code, out, _ = run_cli("verify-ledger", "--ledger", str(ledger_path), "--head", head)
+        self.assertEqual(code, 1)
+        self.assertIn("stored head", out)
+
+    def test_missing_ledger_file_is_not_ok(self):
+        code, out, _ = run_cli("verify-ledger", "--ledger", str(self.dir / "aprovals.jsonl"))
+        self.assertEqual(code, 1)
+        self.assertIn("no ledger file", out)
+
+    def test_empty_approver_or_note_is_refused(self):
+        code, _, err = run_cli("approve", "--candidate", "v3", "--by", " ", "--note", "n",
+                               "--results", str(ROOT / "examples" / "results.json"), "--ledger", str(self.dir / "a.jsonl"))
+        self.assertEqual(code, 2)
+        self.assertFalse((self.dir / "a.jsonl").exists())

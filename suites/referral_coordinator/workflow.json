@@ -84,6 +84,15 @@
       "medication_list"
     ]
   },
+  "document_labels": {
+    "referral_order": "referral order",
+    "ecg": "ECG",
+    "recent_labs": "recent lab results",
+    "imaging_report": "imaging report",
+    "lesion_photos": "photos of the skin lesion",
+    "medication_list": "medication list",
+    "visit_notes": "visit notes"
+  },
   "prior_auth_rules": {
     "HMO-100": {
       "requires_prior_auth_for": [

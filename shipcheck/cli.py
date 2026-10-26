@@ -11,15 +11,29 @@ from pathlib import Path
 from shipcheck import ledger
 from shipcheck.checks import CHECKS
 from shipcheck.cost import load_rate_card
-from shipcheck.gate import change_text, correct_text, money_text
+from shipcheck.gate import change_text, correct_text, money_text, wide_interval_text
 from shipcheck.model import BLOCK, SAFETY, load_runs, load_suite, read_json
 from shipcheck.report import DEFAULT_RESULTS, build_results, write_report
 from shipcheck.simulate import VERSIONS, runs_file, simulate
 
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_SUITE = PACKAGE_ROOT / "suites" / "referral_coordinator"
-DEFAULT_RATES = PACKAGE_ROOT / "rates.example.json"
 DEFAULT_LEDGER = "approvals.jsonl"
+
+
+def _bundled(relative: str) -> Path:
+    """The bundled suite and rate card live in the repo checkout, next to the package.
+
+    An editable install (pip install -e .) finds them there. A regular install
+    does not ship them, so fall back to the current folder, which works when
+    running from the repo root.
+    """
+    for base in (Path(__file__).resolve().parent.parent, Path.cwd()):
+        if (base / relative).exists():
+            return base / relative
+    return Path(__file__).resolve().parent.parent / relative
+
+
+DEFAULT_SUITE = _bundled("suites/referral_coordinator")
+DEFAULT_RATES = _bundled("rates.example.json")
 
 
 def _write_json(path: Path, obj) -> None:
@@ -27,10 +41,20 @@ def _write_json(path: Path, obj) -> None:
     path.write_text(json.dumps(obj, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _display_path(p: Path) -> str:
+    try:
+        return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        return p.resolve().as_posix()
+
+
 def _print_summary(doc: dict, out=None) -> None:
     w = (out or sys.stdout).write
+    rc = doc["rate_card"]
     if doc["simulated"]:
-        w("shipcheck demo: simulated data. All cases and agent runs are synthetic.\n")
+        w("shipcheck: simulated data. All cases and agent runs are synthetic.\n")
+    elif doc.get("synthetic_cases"):
+        w("shipcheck: synthetic test cases. No real patient data.\n")
     for cmp in doc["comparisons"]:
         v = cmp["verdict"]
         base, cand = doc["versions"][cmp["baseline"]], doc["versions"][cmp["candidate"]]
@@ -44,12 +68,18 @@ def _print_summary(doc: dict, out=None) -> None:
         w(f"  Correct: {correct_text(base['n_passed'], base['n_cases'])} before, "
           f"{correct_text(cand['n_passed'], cand['n_cases'])} now. Safety issues: {base['safety_issues']} before, "
           f"{cand['safety_issues']} now.\n")
+        wide = wide_interval_text(base["n_cases"], [base["interval"], cand["interval"]])
+        if wide:
+            w(f"  {wide}\n")
         w(f"  Tokens per run: {change_text(d['tokens_change'])}.")
         if d["cost_change"] is not None:
-            w(f" Cost per 1,000 runs: {money_text(d['cost_per_1000_before'])} to {money_text(d['cost_per_1000_after'])}"
-              f" ({change_text(d['cost_change'])}).")
+            cur = base["cost"]["currency"]
+            w(f" Cost per 1,000 runs: {money_text(d['cost_per_1000_before'], cur)} to "
+              f"{money_text(d['cost_per_1000_after'], cur)} ({change_text(d['cost_change'])}).")
+        elif rc:
+            missing = sorted({x["model_label"] for x in (base, cand) if not x["cost"]})
+            w(f" No cost estimate: the rate card has no rate for {', '.join(missing)}.")
         w("\n")
-    rc = doc["rate_card"]
     if rc:
         w(f"\nDollar figures use {rc['label']}. Source: {rc['source']} Date: {rc['as_of']}.\n")
 
@@ -78,13 +108,6 @@ def cmd_demo(args) -> int:
     return 0
 
 
-def _display_path(p: Path) -> str:
-    try:
-        return p.resolve().relative_to(Path.cwd().resolve()).as_posix()
-    except ValueError:
-        return p.resolve().as_posix()
-
-
 def cmd_compare(args) -> int:
     suite = load_suite(args.suite)
     rates = load_rate_card(args.rates)
@@ -95,7 +118,7 @@ def cmd_compare(args) -> int:
         return 2
     b, c = base_runs[0].agent_version, cand_runs[0].agent_version
     if b == c:
-        print(f"error: baseline and candidate are both agent_version {b!r}; give them different names", file=sys.stderr)
+        print(f"error: baseline and candidate both have agent_version {b!r}; give them different names", file=sys.stderr)
         return 2
     descriptions = {}
     for name, raw in ((b, raw_b), (c, raw_c)):
@@ -104,12 +127,8 @@ def cmd_compare(args) -> int:
     simulated = all(isinstance(r, dict) and r.get("simulated") for r in (raw_b, raw_c))
     out = Path(args.out)
     results_path = Path(args.results) if args.results else out.with_suffix(".json")
-    try:
-        doc = build_results(suite, {b: base_runs, c: cand_runs}, [(b, c)], rates, descriptions, simulated,
-                            results_path=_display_path(results_path))
-    except ValueError as err:
-        print(f"error: {err}", file=sys.stderr)
-        return 2
+    doc = build_results(suite, {b: base_runs, c: cand_runs}, [(b, c)], rates, descriptions, simulated,
+                        results_path=_display_path(results_path))
     _write_json(results_path, doc)
     write_report(out, doc, {b: base_runs, c: cand_runs})
     _print_summary(doc)
@@ -120,16 +139,21 @@ def cmd_compare(args) -> int:
 
 
 def _find_comparison(doc: dict, candidate: str, baseline: str | None) -> dict:
+    if not isinstance(doc, dict) or not isinstance(doc.get("comparisons"), list):
+        raise ValueError("the results file has no comparisons; run shipcheck demo or shipcheck compare first")
     found = [c for c in doc["comparisons"] if c["candidate"] == candidate and (baseline is None or c["baseline"] == baseline)]
     if not found:
         names = ", ".join(sorted({c["candidate"] for c in doc["comparisons"]}))
-        raise SystemExit(f"error: no comparison for candidate {candidate!r} in the results file (have: {names})")
+        raise ValueError(f"no comparison for candidate {candidate!r} in the results file (have: {names})")
     if len(found) > 1:
-        raise SystemExit(f"error: {candidate!r} was compared with more than one baseline; pass --baseline")
+        raise ValueError(f"{candidate!r} was compared with more than one baseline; pass --baseline")
     return found[0]
 
 
 def _decision(args, decision: str) -> int:
+    if not args.by.strip() or not args.note.strip():
+        print("error: --by must name a person or role, and --note must say why", file=sys.stderr)
+        return 2
     doc = read_json(args.results)
     cmp = _find_comparison(doc, args.candidate, args.baseline)
     level = cmp["verdict"]["level"]
@@ -156,8 +180,8 @@ def _decision(args, decision: str) -> int:
             "cost_change": cmp["cost_delta"]["cost_change"],
             "simulated": doc["simulated"],
         },
-        "by": args.by,
-        "note": args.note,
+        "by": args.by.strip(),
+        "note": args.note.strip(),
         "results_file": Path(args.results).as_posix(),
     }
     try:
@@ -166,9 +190,10 @@ def _decision(args, decision: str) -> int:
         print(f"Not recorded: {err}", file=sys.stderr)
         return 1
     verb = "Approved" if decision == "approve" else "Rolled back"
-    print(f"{verb} {cmp['candidate']} (verdict {level}) by {args.by}. Record {record['seq']} in {args.ledger}.")
+    print(f"{verb} {cmp['candidate']} (verdict {level}) by {entry['by']}. Record {record['seq']} in {args.ledger}.")
     print(f"Record hash: {record['hash']}")
-    print("Keep this hash somewhere the log's writer cannot edit to detect deleted records later.")
+    print("Keep this hash where the log's writer cannot edit it. verify-ledger --head HASH then also catches "
+          "a rewritten log or deleted records.")
     return 0
 
 
@@ -181,6 +206,9 @@ def cmd_rollback(args) -> int:
 
 
 def cmd_verify_ledger(args) -> int:
+    if not Path(args.ledger).is_file():
+        print(f"no ledger file at {args.ledger}")
+        return 1
     result = ledger.verify(args.ledger, expected_head=args.head)
     print(result.message)
     return 0 if result.ok else 1
@@ -205,8 +233,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     d = sub.add_parser("demo", help="simulate v1, v2 and v3, compare them, and write the report")
     d.add_argument("--out", default="examples", help="output folder (default: examples)")
-    d.add_argument("--suite", default=str(DEFAULT_SUITE), help=argparse.SUPPRESS)
-    d.add_argument("--rates", default=str(DEFAULT_RATES), help=argparse.SUPPRESS)
+    d.add_argument("--suite", default=str(DEFAULT_SUITE), help="suite folder (default: the bundled referral suite)")
+    d.add_argument("--rates", default=str(DEFAULT_RATES), help="rate card (default: the bundled example rates)")
     d.set_defaults(func=cmd_demo)
 
     c = sub.add_parser("compare", help="compare two runs files on a suite")
@@ -231,7 +259,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     v = sub.add_parser("verify-ledger", help="check the approvals log hash chain")
     v.add_argument("--ledger", default=DEFAULT_LEDGER)
-    v.add_argument("--head", help="latest hash kept elsewhere, to also detect deleted records")
+    v.add_argument("--head", help="latest hash kept elsewhere, to also catch a rewritten log or deleted records")
     v.set_defaults(func=cmd_verify_ledger)
 
     k = sub.add_parser("checks", help="list every check in plain language")
@@ -245,6 +273,15 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(args)
     except FileNotFoundError as err:
         print(f"error: file not found: {err.filename}", file=sys.stderr)
+        return 2
+    except IsADirectoryError as err:
+        print(f"error: expected a file but found a folder: {err.filename}", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as err:
+        print(f"error: not valid JSON: {err}", file=sys.stderr)
+        return 2
+    except (ValueError, KeyError, TypeError, UnicodeError) as err:
+        print(f"error: {err}", file=sys.stderr)
         return 2
 
 

@@ -111,6 +111,7 @@ class Workflow:
     routine_flags: tuple[str, ...]
     specialist_directory: tuple[dict, ...]
     specialist_selection_rule: str = ""
+    document_labels: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Workflow":
@@ -125,6 +126,7 @@ class Workflow:
             routine_flags=tuple(d.get("routine_flags", [])),
             specialist_directory=tuple(d["specialist_directory"]),
             specialist_selection_rule=d.get("specialist_selection_rule", ""),
+            document_labels=dict(d.get("document_labels", {})),
         )
 
     @property
@@ -146,6 +148,9 @@ class Workflow:
         s = self.specialist(specialist_id)
         return bool(s) and plan in s["in_network_plans"]
 
+    def doc_label(self, document: str) -> str:
+        return self.document_labels.get(document, document.replace("_", " "))
+
     def prior_auth_required(self, plan: str, specialty: str) -> bool:
         rule = self.prior_auth_rules.get(plan, {})
         return specialty in rule.get("requires_prior_auth_for", [])
@@ -156,6 +161,7 @@ class Suite:
     name: str
     workflow: Workflow
     cases: tuple[Case, ...]
+    synthetic: bool = False
 
     def case(self, case_id: str) -> Case:
         for c in self.cases:
@@ -167,6 +173,15 @@ class Suite:
 # Runs: what an agent actually did
 
 
+def _as_dict(value) -> dict:
+    """Tool args and results are usually objects. Keep anything else under "value"."""
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return dict(value)
+    return {"value": value}
+
+
 @dataclass(frozen=True)
 class Step:
     tool: str
@@ -175,10 +190,15 @@ class Step:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Step":
-        return cls(tool=d["tool"], args=dict(d.get("args") or {}), result=dict(d.get("result") or {}))
+        if not isinstance(d, dict) or not d.get("tool"):
+            raise ValueError("every step needs a 'tool' name")
+        return cls(tool=str(d["tool"]), args=_as_dict(d.get("args")), result=_as_dict(d.get("result")))
 
     def to_dict(self) -> dict:
         return {"tool": self.tool, "args": self.args, "result": self.result}
+
+
+PACKET_KEYS = ("specialist_id", "fax", "documents", "prior_auth_status", "fields")
 
 
 @dataclass(frozen=True)
@@ -188,15 +208,19 @@ class Packet:
     documents: tuple[str, ...]
     prior_auth_status: str | None
     fields: dict
+    # Top-level keys outside the schema. Kept, not dropped, so the data
+    # checks can see them: an "ssn" next to "fields" still counts as shared.
+    extra: dict = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Packet":
         return cls(
             specialist_id=d.get("specialist_id"),
             fax=d.get("fax"),
-            documents=tuple(d.get("documents", [])),
+            documents=tuple(d.get("documents") or []),
             prior_auth_status=d.get("prior_auth_status"),
-            fields=dict(d.get("fields") or {}),
+            fields=_as_dict(d.get("fields")),
+            extra={k: v for k, v in d.items() if k not in PACKET_KEYS},
         )
 
     def to_dict(self) -> dict:
@@ -206,6 +230,7 @@ class Packet:
             "documents": list(self.documents),
             "prior_auth_status": self.prior_auth_status,
             "fields": self.fields,
+            **self.extra,
         }
 
 
@@ -220,6 +245,8 @@ class Final:
         if action not in FINAL_ACTIONS:
             raise ValueError(f"final.action must be one of {FINAL_ACTIONS}, got {action!r}")
         packet = d.get("packet")
+        if action == "sent" and not packet:
+            raise ValueError("final.action is 'sent' but final.packet is empty: a sent run must say what was sent")
         return cls(action=action, packet=Packet.from_dict(packet) if packet else None)
 
     def to_dict(self) -> dict:
@@ -237,7 +264,8 @@ class Usage:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Usage":
-        return cls(input_tokens=int(d.get("input_tokens", 0)), output_tokens=int(d.get("output_tokens", 0)))
+        d = d or {}
+        return cls(input_tokens=int(d.get("input_tokens") or 0), output_tokens=int(d.get("output_tokens") or 0))
 
     def to_dict(self) -> dict:
         return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
@@ -255,15 +283,29 @@ class Run:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Run":
-        return cls(
-            run_id=d["run_id"],
-            case_id=d["case_id"],
-            agent_version=d["agent_version"],
-            model_label=d.get("model_label", "unknown-model"),
-            steps=tuple(Step.from_dict(s) for s in d.get("steps", [])),
-            final=Final.from_dict(d["final"]),
-            usage=Usage.from_dict(d.get("usage", {})),
-        )
+        if not isinstance(d, dict):
+            raise ValueError("each run must be a JSON object")
+        name = d.get("run_id") or d.get("case_id") or "?"
+        try:
+            steps = []
+            for i, s in enumerate(d.get("steps") or []):
+                try:
+                    steps.append(Step.from_dict(s))
+                except ValueError as err:
+                    raise ValueError(f"step {i + 1}: {err}") from None
+            return cls(
+                run_id=d["run_id"],
+                case_id=d["case_id"],
+                agent_version=d["agent_version"],
+                model_label=d.get("model_label") or "unknown-model",
+                steps=tuple(steps),
+                final=Final.from_dict(d["final"]),
+                usage=Usage.from_dict(d.get("usage")),
+            )
+        except KeyError as err:
+            raise ValueError(f"run {name}: missing field {err.args[0]!r}") from None
+        except (ValueError, TypeError) as err:
+            raise ValueError(f"run {name}: {err}") from None
 
     def to_dict(self) -> dict:
         return {
@@ -285,12 +327,20 @@ class Run:
 
 @dataclass(frozen=True)
 class CheckResult:
+    """One check on one run.
+
+    expected/actual are exact, for engineers. plain_expected/plain_actual say
+    the same thing in words a clinic manager would use.
+    """
+
     check_id: str
     severity: str
     status: str
     step: int | None = None
     expected: str = ""
     actual: str = ""
+    plain_expected: str = ""
+    plain_actual: str = ""
 
     @property
     def failed(self) -> bool:
@@ -308,11 +358,14 @@ class CheckResult:
             "step": self.step,
             "expected": self.expected,
             "actual": self.actual,
+            "plain_expected": self.plain_expected,
+            "plain_actual": self.plain_actual,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "CheckResult":
-        return cls(d["check_id"], d["severity"], d["status"], d.get("step"), d.get("expected", ""), d.get("actual", ""))
+        return cls(d["check_id"], d["severity"], d["status"], d.get("step"), d.get("expected", ""), d.get("actual", ""),
+                   d.get("plain_expected", ""), d.get("plain_actual", ""))
 
 
 @dataclass(frozen=True)
@@ -382,7 +435,8 @@ class CaseChange:
     A new failure is a check that fails on the candidate and did not fail on the
     baseline (it passed, or did not apply). A resolved failure is a check that
     failed on the baseline and passes on the candidate. A check that goes from
-    failing to not applying is neither: it did not get fixed, it went away.
+    failing to not applying is neither: it did not get fixed, it went away,
+    so it is listed separately in no_longer_applies.
     """
 
     case_id: str
@@ -390,6 +444,7 @@ class CaseChange:
     candidate_passed: bool
     new_failures: tuple[str, ...]
     resolved: tuple[str, ...]
+    no_longer_applies: tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -398,6 +453,7 @@ class CaseChange:
             "candidate_passed": self.candidate_passed,
             "new_failures": list(self.new_failures),
             "resolved": list(self.resolved),
+            "no_longer_applies": list(self.no_longer_applies),
         }
 
 
@@ -465,13 +521,16 @@ def load_suite(path: str | Path) -> Suite:
     ids = [c.case_id for c in cases]
     if len(set(ids)) != len(ids):
         raise ValueError("cases.json has duplicate case_id values")
-    return Suite(name=workflow.name, workflow=workflow, cases=cases)
+    synthetic = bool(isinstance(raw, dict) and raw.get("synthetic")) or bool(read_json(path / "workflow.json").get("synthetic"))
+    return Suite(name=workflow.name, workflow=workflow, cases=cases, synthetic=synthetic)
 
 
 def load_runs(path: str | Path) -> list[Run]:
     """Load runs from a JSON file: either a list of runs or {"runs": [...]}."""
     raw = read_json(path)
-    run_list = raw["runs"] if isinstance(raw, dict) else raw
+    run_list = raw.get("runs") if isinstance(raw, dict) else raw
+    if not isinstance(run_list, list):
+        raise ValueError(f"{path}: expected a list of runs or an object with a 'runs' list")
     return [Run.from_dict(r) for r in run_list]
 
 

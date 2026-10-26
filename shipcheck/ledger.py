@@ -5,13 +5,14 @@ hash of the record before it, and its own hash is
 
     sha256(prev_hash + canonical_json(record without its hash))
 
-so editing any field, or reordering lines, breaks the chain at that point and
-verify() names the first broken record.
+so editing a field by hand, or reordering lines, breaks the chain at that
+point and verify() names the first broken record.
 
-What this does not catch on its own: deleting the newest records from the
-end. The records left behind still form a valid chain. To catch that, keep the
-latest hash somewhere the log's writer cannot edit (a ticket, a commit, an
-email) and pass it to verify(expected_head=...).
+This is tamper-evident, not tamper-proof. The hash has no secret key, so
+anyone who can write the file can rewrite a record and recompute every hash
+after it, and deleting the newest records leaves a valid shorter chain. Both
+are caught only by keeping the latest hash somewhere the log's writer cannot
+edit (a ticket, a commit, an email) and passing it to verify(expected_head=...).
 """
 
 from __future__ import annotations
@@ -49,9 +50,14 @@ def read(path: str | Path) -> list[dict]:
         if not line.strip():
             continue
         try:
-            records.append(json.loads(line))
+            record = json.loads(line)
         except json.JSONDecodeError as e:
-            raise LedgerError(i, f"line {i} is not valid JSON ({e.msg})") from None
+            n = len(records) + 1
+            raise LedgerError(n, f"record {n} (line {i}) is not valid JSON ({e.msg})") from None
+        if not isinstance(record, dict):
+            n = len(records) + 1
+            raise LedgerError(n, f"record {n} (line {i}) is not a JSON object")
+        records.append(record)
     return records
 
 
@@ -110,6 +116,7 @@ def append(path: str | Path, entry: dict, now: datetime | None = None) -> dict:
     }
     record = {**body, "hash": record_hash(prev, body)}
     path.parent.mkdir(parents=True, exist_ok=True)
+    needs_newline = path.exists() and path.stat().st_size > 0 and not path.read_bytes().endswith(b"\n")
     with open(path, "a", encoding="utf-8") as f:
-        f.write(canonical_json(record) + "\n")
+        f.write(("\n" if needs_newline else "") + canonical_json(record) + "\n")
     return record

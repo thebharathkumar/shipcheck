@@ -1,3 +1,4 @@
+import itertools
 import json
 import tempfile
 import unittest
@@ -36,7 +37,7 @@ class LedgerTest(unittest.TestCase):
 
     def test_each_record_hashes_the_one_before(self):
         recs = [json.loads(x) for x in self.lines()]
-        for prev, cur in zip(recs, recs[1:]):
+        for prev, cur in itertools.pairwise(recs):
             self.assertEqual(cur["prev_hash"], prev["hash"])
 
     def test_edited_record_is_detected(self):
@@ -95,3 +96,43 @@ class LedgerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerReviewFindingsTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "approvals.jsonl"
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_hash_matches_the_documented_formula(self):
+        rec = ledger.append(self.path, {"decision": "approved", "candidate": "v3", "by": "A", "note": "n"}, now=T0)
+        body = {k: v for k, v in rec.items() if k != "hash"}
+        canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        import hashlib
+
+        self.assertEqual(rec["hash"], hashlib.sha256((ledger.GENESIS + canonical).encode("utf-8")).hexdigest())
+
+    def test_entry_cannot_override_chain_fields(self):
+        rec = ledger.append(self.path, {"candidate": "v3", "seq": 99, "hash": "x", "prev_hash": "y"}, now=T0)
+        self.assertEqual((rec["seq"], rec["prev_hash"]), (1, ledger.GENESIS))
+        self.assertTrue(ledger.verify(self.path).ok)
+
+    def test_append_after_a_missing_final_newline_keeps_the_chain(self):
+        for i in range(2):
+            ledger.append(self.path, {"candidate": f"v{i}", "by": "A", "note": "n"}, now=T0)
+        self.path.write_text(self.path.read_text().rstrip("\n"))
+        ledger.append(self.path, {"candidate": "v9", "by": "A", "note": "n"}, now=T0)
+        result = ledger.verify(self.path)
+        self.assertTrue(result.ok, result.message)
+        self.assertEqual(result.count, 3)
+
+    def test_broken_record_number_ignores_blank_lines(self):
+        for i in range(3):
+            ledger.append(self.path, {"candidate": f"v{i}", "by": "A", "note": "n"}, now=T0)
+        lines = self.path.read_text().splitlines()
+        self.path.write_text("\n\n".join(lines + ["garbage"]) + "\n")
+        result = ledger.verify(self.path)
+        self.assertEqual(result.broken_at, 4)
+        self.assertIn("record 4 (line 7)", result.message)

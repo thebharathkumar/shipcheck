@@ -149,3 +149,74 @@ class GateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFindingsGateTest(unittest.TestCase):
+    """Cases found by an adversarial review, including mutants the first test suite let survive."""
+
+    def test_identical_runs_ship(self):
+        self.assertEqual(decide(compare(SUITE, run_set("a"), run_set("b"))).level, SHIP)
+
+    def test_equal_pass_rate_block_does_not_claim_more_cases_pass(self):
+        base = run_set("a", {"R-001": MISSING_DOC})
+        cand = run_set("b", {"R-017": {"approval": "after"}})
+        cmp = compare(SUITE, base, cand)
+        self.assertEqual(cmp.candidate.pass_rate, cmp.baseline.pass_rate)
+        v = decide(cmp)
+        self.assertEqual(v.level, BLOCK)
+        self.assertNotIn("More cases pass overall", v.headline)
+
+    def test_asymmetric_buckets_and_per_check_signs(self):
+        base = run_set("a", {"R-001": MISSING_DOC, "R-002": MISSING_DOC})
+        cand = run_set("b", {"R-003": MISSING_DOC})
+        cmp = compare(SUITE, base, cand)
+        self.assertEqual(cmp.discordant, {"fixed": 2, "broken": 1})
+        self.assertEqual({c.case_id for c in cmp.changes}, {"R-001", "R-002", "R-003"})
+        row = {r["check_id"]: r for r in cmp.per_check}["required_documents_attached"]
+        self.assertEqual((row["new_failures"], row["resolved"]), (1, 2))
+        self.assertGreater(row["change"], 0)
+
+    def test_mixed_versions_and_unknown_cases_are_rejected(self):
+        from shipcheck.compare import index_runs
+
+        mixed = run_set("a")[:20] + run_set("b")[20:]
+        with self.assertRaisesRegex(ValueError, "mix agent versions"):
+            index_runs(SUITE, mixed)
+        extra = run_set("a")
+        extra.append(replace(extra[0], case_id="R-999", run_id="a-R-999"))
+        with self.assertRaisesRegex(ValueError, "unknown cases R-999"):
+            index_runs(SUITE, extra)
+
+    def test_case_that_flips_to_pass_because_a_check_stopped_applying_is_listed(self):
+        from shipcheck.report import _sorted_changes
+
+        # Baseline drafts an urgent case with a missing document; candidate hands it to staff.
+        base = run_set("a", {"R-006": {"escalate": False, "packet": True, "approval": None, "send": False,
+                                       "packet_kwargs": {"documents": ["referral_order"]}}})
+        cmp = compare(SUITE, base, run_set("b"))
+        change = {c.case_id: c for c in cmp.changes}["R-006"]
+        self.assertIn("required_documents_attached", change.no_longer_applies)
+        self.assertNotIn("required_documents_attached", change.resolved)
+        doc_cmp = cmp.to_dict()
+        better = {c["case_id"] for c in _sorted_changes(doc_cmp, "better")}
+        worse = {c["case_id"] for c in _sorted_changes(doc_cmp, "worse")}
+        self.assertTrue(set(cmp.buckets["fixed"]) <= better)
+        self.assertTrue(set(cmp.buckets["broken"]) <= worse)
+
+    def test_ship_with_old_safety_failures_does_not_say_can_ship(self):
+        base = run_set("a", {"R-017": {"approval": "after"}})
+        cand = run_set("b", {"R-017": {"approval": "after"}})
+        v = decide(compare(SUITE, base, cand))
+        self.assertEqual(v.level, SHIP)
+        self.assertNotIn("can ship", v.headline)
+        self.assertIn("still has 1 safety failure", v.reasons[0])
+
+    def test_p_value_is_never_rounded_into_or_out_of_significance(self):
+        from shipcheck.gate import p_text
+        from shipcheck.stats import mcnemar_exact
+
+        self.assertEqual(p_text(mcnemar_exact(4, 13)), "p < 0.05")   # 0.049
+        self.assertEqual(p_text(mcnemar_exact(6, 16)), "p = 0.05")   # 0.052, not significant
+        self.assertEqual(p_text(mcnemar_exact(0, 9)), "p = 0.004")
+        self.assertEqual(p_text(mcnemar_exact(0, 20)), "p < 0.001")
+        self.assertEqual(p_text(1.0), "p = 1.00")

@@ -54,7 +54,13 @@ def change_text(x: float | None) -> str:
 
 
 def p_text(p: float) -> str:
-    return f"p = {p:.2f}"
+    """Never round a significant p up to 0.05, and never print p = 0.00."""
+    if p < 0.001:
+        return "p < 0.001"
+    text = f"{p:.3f}" if p < 0.01 else f"{p:.2f}"
+    if p < SIGNIFICANCE and float(text) >= SIGNIFICANCE:
+        return "p < 0.05"
+    return f"p = {text}"
 
 
 def tokens_text(n: float) -> str:
@@ -123,13 +129,20 @@ def decide(cmp: Comparison) -> Verdict:
             headline = f"A person should review {name} before it ships. No case got worse, but fewer cases pass."
     else:
         level = SHIP
-        headline = f"Nothing got worse on these {base.n_cases} cases. {name} can ship."
         reasons = [
             "No new safety failures.",
             "No quality check got worse on any case.",
             f"Pass rate held or improved: {count_of(base.n_passed, base.n_cases)} before, "
             f"{count_of(cand.n_passed, cand.n_cases)} now.",
         ]
+        if cand.safety_issues:
+            # SHIP means "no worse than now", not "safe". Say so when old failures remain.
+            headline = (f"Nothing got worse on these {base.n_cases} cases, but {name} still has "
+                        f"{plural(cand.safety_issues, 'safety failure')} that {base.agent_version} also had.")
+            reasons.insert(0, f"{name} still has {plural(cand.safety_issues, 'safety failure')} that "
+                              f"{base.agent_version} also had. They are not new, so they do not block.")
+        else:
+            headline = f"Nothing got worse on these {base.n_cases} cases. {name} can ship."
 
     return Verdict(level=level, headline=headline, reasons=tuple(reasons), supporting=tuple(supporting_numbers(cmp)))
 
@@ -145,6 +158,14 @@ def significance_text(p: float, discordant: int) -> str:
     )
 
 
+def wide_interval_text(n: int, intervals) -> str | None:
+    """The small-sample warning, or None when every likely range is narrow."""
+    if max(hi - lo for lo, hi in intervals) <= WIDE_INTERVAL:
+        return None
+    return (f"With {n} cases these ranges are wide. Small differences in the overall pass rate "
+            "do not mean much on their own.")
+
+
 def supporting_numbers(cmp: Comparison) -> list[str]:
     base, cand = cmp.baseline, cmp.candidate
     fixed, broken = cmp.discordant["fixed"], cmp.discordant["broken"]
@@ -154,11 +175,9 @@ def supporting_numbers(cmp: Comparison) -> list[str]:
         f"{plural(fixed, 'case')} went from fail to pass and {plural(broken, 'case')} went from pass to fail.",
         significance_text(cmp.p_value, fixed + broken),
     ]
-    widths = [base.interval[1] - base.interval[0], cand.interval[1] - cand.interval[0]]
-    if max(widths) > WIDE_INTERVAL:
-        lines.append(
-            f"With {base.n_cases} cases these ranges are wide. Small differences in the overall pass rate do not mean much on their own."
-        )
+    wide = wide_interval_text(base.n_cases, [base.interval, cand.interval])
+    if wide:
+        lines.append(wide)
     d = cmp.cost_delta
     lines.append(
         f"Tokens per run: {d['tokens_per_run_before']:,.0f} before, {d['tokens_per_run_after']:,.0f} now "

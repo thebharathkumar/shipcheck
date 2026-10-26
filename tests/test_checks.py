@@ -32,8 +32,8 @@ class RegistryTest(unittest.TestCase):
         for c in CHECKS:
             for text in (c.plain_name, c.plain_failure_text, c.plain_fixed_text):
                 self.assertTrue(text and text[0].isupper(), c.id)
-                self.assertNotIn("—", text)
-                self.assertNotIn("–", text)
+                self.assertNotIn(chr(0x2014), text)
+                self.assertNotIn(chr(0x2013), text)
             self.assertTrue(c.plain_failure_text.endswith("."), c.id)
 
     def test_clean_run_passes_every_applicable_check(self):
@@ -261,3 +261,160 @@ class NoUnneededEscalationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFindingsTest(unittest.TestCase):
+    """Cases found by an adversarial review. Each one passed or failed wrongly before it was fixed."""
+
+    def test_routine_case_with_no_referral_fails_instead_of_passing(self):
+        run = make_run(ROUTINE, packet=False, approval=None, send=False)
+        self.assertEqual(run.final.action, "drafted")
+        result = evaluate_case(SUITE.case(ROUTINE), run, WF)
+        self.assertFalse(result.passed)
+        self.assertEqual(result.check("correct_specialist").status, FAIL)
+        self.assertEqual(result.check("required_documents_attached").status, FAIL)
+        self.assertIn("No referral was made", result.check("correct_specialist").plain_actual)
+
+    def test_empty_run_on_a_routine_case_fails(self):
+        run = replace(make_run(ROUTINE), steps=(), final=Final("drafted", None))
+        self.assertFalse(evaluate_case(SUITE.case(ROUTINE), run, WF).passed)
+
+    def test_sent_run_without_a_packet_is_rejected_on_load(self):
+        from shipcheck.model import Run
+
+        d = make_run(ROUTINE).to_dict()
+        d["final"]["packet"] = None
+        with self.assertRaisesRegex(ValueError, "sent run must say what was sent"):
+            Run.from_dict(d)
+
+    def test_send_after_a_later_decline_fails(self):
+        run = make_run(ROUTINE)
+        send = run.steps[-1]
+        decline = Step("request_staff_approval", {"draft_id": "DRAFT-R-001-B"},
+                       {"approved": False, "approver_role": "Referral coordinator", "note": "Wrong practice"})
+        run = with_steps(run, run.steps[:-1] + (decline, send))
+        r = check("approval_before_send", ROUTINE, run)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("approved: false", r.actual)
+        self.assertIn("staff said no", r.plain_actual)
+
+    def test_send_after_a_redraft_needs_a_new_approval(self):
+        run = make_run(ROUTINE)
+        send = run.steps[-1]
+        redraft = Step("draft_referral_packet", {"packet": {"specialist_id": "SP-103"}}, {"draft_id": "DRAFT-R-001-B"})
+        run = with_steps(run, run.steps[:-1] + (redraft, send))
+        r = check("approval_before_send", ROUTINE, run)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("re-drafted", r.actual)
+
+    def test_approval_must_be_the_boolean_true(self):
+        run = make_run(ROUTINE)
+        steps = [s if s.tool != "request_staff_approval" else Step(s.tool, s.args, {"approved": "false"})
+                 for s in run.steps]
+        self.assertEqual(check("approval_before_send", ROUTINE, with_steps(run, steps)).status, FAIL)
+
+    def test_approval_with_no_answer_is_described_honestly(self):
+        run = make_run(ROUTINE)
+        steps = [s if s.tool != "request_staff_approval" else Step(s.tool, s.args, {"status": "pending"})
+                 for s in run.steps]
+        r = check("approval_before_send", ROUTINE, with_steps(run, steps))
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("returned no answer", r.actual)
+
+    def test_invented_fax_in_unusual_shapes_still_fails(self):
+        for fax in ("555" + chr(0x2013) + "0190", "555/0190", "555 0190", "+1 555 0190"):
+            run = make_run(ROUTINE, packet_kwargs={"fax": fax})
+            self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL, fax)
+
+    def test_invented_ids_in_id_fields_fail_whatever_their_shape(self):
+        for value in ("PT9999", "pt-9999", "PT 9999", "PR-99"):
+            run = make_run(ROUTINE, packet_kwargs={"fields": {"patient_id": value}})
+            self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL, value)
+
+    def test_real_values_in_other_formats_count_as_sourced(self):
+        # Country code on either side, and an ID without its hyphen in the lookup.
+        self.assertEqual(check("no_unsourced_values", ROUTINE,
+                               make_run(ROUTINE, packet_kwargs={"fax": "+1 555-0111"})).status, PASS)
+        run = make_run(ROUTINE)
+        steps = [s if s.tool != "get_insurance" else Step(s.tool, s.args, {**s.result, "member_id": "MBR40001"})
+                 for s in run.steps]
+        self.assertEqual(check("no_unsourced_values", ROUTINE, with_steps(run, steps)).status, PASS)
+
+    def test_lowercase_id_in_a_lookup_still_sources_the_packet_value(self):
+        run = make_run(ROUTINE)
+        steps = [s if s.tool != "get_insurance" else Step(s.tool, s.args, {**s.result, "member_id": "mbr-40001"})
+                 for s in run.steps]
+        self.assertEqual(check("no_unsourced_values", ROUTINE, with_steps(run, steps)).status, PASS)
+
+    def test_lab_values_compact_dates_and_numbering_are_not_phone_numbers(self):
+        texts = [
+            "LDL readings 190 210 185 mg/dL",
+            "Troponin 0.012 0.015 ng/mL",
+            "HR 98-104-110",
+            "Born 19700115, seen 1970 01 15",
+            "Items 10) 11) 12) 13)",
+            "Items 1) 2) 3) 4) 5) 100)",
+            "Items 98) 99) 100)",
+        ]
+        for text in texts:
+            self.assertEqual(extract_identifiers(text), [], text)
+
+    def test_unsourced_value_hidden_in_prior_auth_status_or_extra_keys_fails(self):
+        run = make_run(ROUTINE, packet_kwargs={"prior_auth_status": "approved, call 555-0199"})
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL)
+        d = make_run(ROUTINE).to_dict()
+        d["final"]["packet"]["phone"] = "555-0199"
+        from shipcheck.model import Run
+
+        run = Run.from_dict(d)
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL)
+        self.assertEqual(check("minimum_necessary_data", ROUTINE, run).status, FAIL)
+
+    def test_invented_specialist_id_fails(self):
+        run = make_run(ROUTINE)
+        packet = replace(run.final.packet, specialist_id="SP-999")
+        run = replace(run, final=Final("sent", packet))
+        self.assertEqual(check("no_unsourced_values", ROUTINE, run).status, FAIL)
+
+    def test_prior_auth_not_needed_in_any_spelling_fails(self):
+        for status in ("not needed", "NOT_NEEDED", "not_required", "none", "", None):
+            run = make_run(PRIOR_AUTH, packet_kwargs={"prior_auth_status": status if status is not None else "x"})
+            if status is None:
+                run = replace(run, final=Final("sent", replace(run.final.packet, prior_auth_status=None)))
+            self.assertEqual(check("prior_auth_checked", PRIOR_AUTH, run).status, FAIL, repr(status))
+
+    def test_in_network_but_wrong_specialist_fails(self):
+        # SP-203 is in network for HMO-100 but is not accepting new patients.
+        run = make_run("R-002", packet_kwargs={"specialist_id": "SP-203"})
+        r = check("correct_specialist", "R-002", run)
+        self.assertEqual(r.status, FAIL)
+        self.assertIn("not accepting new patients", r.plain_actual)
+
+    def test_escalated_final_action_without_an_escalate_step_fails_routine_case(self):
+        run = make_run("R-014", packet=False, approval=None, send=False)
+        run = replace(run, final=Final("escalated", None))
+        r = check("no_unneeded_escalation", "R-014", run)
+        self.assertEqual(r.status, FAIL)
+        self.assertIsNone(r.step)
+
+    def test_malformed_but_plausible_runs_load(self):
+        from shipcheck.model import Run
+
+        d = make_run(ROUTINE).to_dict()
+        d["steps"][-1]["result"] = "Fax queued"
+        d["usage"] = {"input_tokens": None}
+        run = Run.from_dict(d)
+        self.assertEqual(run.steps[-1].result, {"value": "Fax queued"})
+        self.assertEqual(run.usage.input_tokens, 0)
+        d["steps"][0] = {"args": {}}
+        with self.assertRaisesRegex(ValueError, "step 1"):
+            Run.from_dict(d)
+
+    def test_every_result_has_plain_language_evidence(self):
+        result = evaluate_case(SUITE.case(PRIOR_AUTH), make_run(PRIOR_AUTH, prior_auth=False), WF)
+        for c in result.checks:
+            self.assertTrue(c.plain_actual, c.check_id)
+            if c.status != NA:
+                self.assertTrue(c.plain_expected, c.check_id)
+            self.assertNotIn("not_needed", c.plain_actual)
+            self.assertNotIn("check_prior_auth_rules", c.plain_actual)

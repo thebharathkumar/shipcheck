@@ -93,16 +93,18 @@ def summarize(
 
 
 def case_change(base: CaseResult, cand: CaseResult) -> CaseChange:
-    new, resolved = [], []
+    new, resolved, gone = [], [], []
     for b in base.checks:
         c = cand.check(b.check_id)
         if c.status == FAIL and b.status != FAIL:
             new.append(b.check_id)
         elif b.status == FAIL and c.status == PASS:
             resolved.append(b.check_id)
-    new.sort(key=RANK.get)
-    resolved.sort(key=RANK.get)
-    return CaseChange(base.case_id, base.passed, cand.passed, tuple(new), tuple(resolved))
+        elif b.status == FAIL and c.status == NA:
+            gone.append(b.check_id)
+    for ids in (new, resolved, gone):
+        ids.sort(key=RANK.get)
+    return CaseChange(base.case_id, base.passed, cand.passed, tuple(new), tuple(resolved), tuple(gone))
 
 
 def compare(
@@ -124,7 +126,7 @@ def compare(
         key = {(False, True): "fixed", (True, False): "broken", (True, True): "still_passing", (False, False): "still_failing"}[(b, c)]
         buckets[key].append(cid)
         ch = case_change(base[cid], cand[cid])
-        if ch.new_failures or ch.resolved:
+        if ch.new_failures or ch.resolved or ch.no_longer_applies or b != c:
             changes.append(ch)
 
     per_check = []

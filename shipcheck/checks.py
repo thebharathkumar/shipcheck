@@ -1,17 +1,20 @@
 """Structural checks for the referral coordinator workflow.
 
 Each check reads one case and one run and returns pass, fail or n/a, with a
-pointer to the step that matters and a short "expected versus what happened".
-No model is asked for an opinion: every check is plain code over the
-trajectory, so the same run always gets the same answer.
+pointer to the step that matters and "expected versus what happened", once in
+exact terms for engineers and once in plain words for a clinic manager. No
+model is asked for an opinion: every check is plain code over the trajectory,
+so the same run always gets the same answer.
 
 A check that does not apply to a case (for example, "only the data the
-specialist needs was shared" when no packet was produced) returns n/a, never a
-free pass. A case passes only if every applicable check passes.
+specialist needs was shared" when the case went to a nurse with no packet)
+returns n/a, never a free pass. A case passes only if every applicable check
+passes.
 """
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Iterable, Iterator
 
@@ -51,11 +54,12 @@ class Check:
 
     def run(self, case: Case, run: Run, workflow: Workflow) -> CheckResult:
         if not self.applies(case, run, workflow):
-            return CheckResult(self.id, self.severity, NA, None, "", self.not_applicable_text)
+            return CheckResult(self.id, self.severity, NA, None, "", self.not_applicable_text, "", self.not_applicable_text)
         return self.evaluate(case, run, workflow)
 
-    def result(self, ok: bool, step: int | None, expected: str, actual: str) -> CheckResult:
-        return CheckResult(self.id, self.severity, PASS if ok else FAIL, step, expected, actual)
+    def result(self, ok: bool, step: int | None, expected: str, actual: str,
+               plain_expected: str, plain_actual: str) -> CheckResult:
+        return CheckResult(self.id, self.severity, PASS if ok else FAIL, step, expected, actual, plain_expected, plain_actual)
 
     def describe(self) -> dict:
         return {
@@ -76,8 +80,13 @@ def _packet_step(run: Run) -> int | None:
     return None
 
 
-def _step_label(i: int | None) -> str:
+def _at(i: int | None) -> str:
     return "the end of the run" if i is None else f"step {i + 1}"
+
+
+def _routine_without_referral(case: Case, run: Run) -> bool:
+    """A routine case that ended with no packet and no hand-off: the referral was never made."""
+    return run.final.packet is None and not case.expected.must_escalate and run.final.action != "escalated"
 
 
 class ApprovalBeforeSend(Check):
@@ -92,35 +101,63 @@ class ApprovalBeforeSend(Check):
         return bool(run.indices(SEND)) or run.final.action == "sent"
 
     def evaluate(self, case, run, workflow):
+        expected = "the latest staff approval before each send returned approved: true, with no re-draft in between"
+        plain_expected = "Staff approve the packet before it is sent."
         sends = run.indices(SEND) or [len(run.steps)]
-        expected = "a staff approval that returned approved: true before every send"
+        approvals = run.indices(APPROVAL)
+        last_ok = None
         for send_at in sends:
-            approvals = run.indices(APPROVAL)
-            granted_before = [j for j in approvals if j < send_at and run.steps[j].result.get("approved") is True]
-            if granted_before:
-                continue
-            later = [j for j in approvals if j > send_at]
-            declined = [j for j in approvals if j < send_at]
-            if declined:
-                why = f"approval at {_step_label(declined[-1])} returned approved: false"
-            elif later:
-                why = f"approval was only requested afterwards, at {_step_label(later[0])}"
-            else:
-                why = "no approval was ever requested"
-            return self.result(False, send_at if send_at < len(run.steps) else None, expected,
-                               f"sent at {_step_label(send_at)}; {why}")
-        first_send = sends[0] if sends[0] < len(run.steps) else None
-        return self.result(True, first_send, expected, f"approved before the send at {_step_label(first_send)}")
+            step = send_at if send_at < len(run.steps) else None
+            sent = _at(step)
+            before = [j for j in approvals if j < send_at]
+            if not before:
+                later = [j for j in approvals if j > send_at]
+                if later:
+                    return self.result(False, step, expected,
+                                       f"sent at {sent}; approval was only requested afterwards, at {_at(later[0])}",
+                                       plain_expected,
+                                       f"It sent the packet at {sent}. Staff were only asked afterwards, at {_at(later[0])}.")
+                return self.result(False, step, expected, f"sent at {sent}; no approval was ever requested",
+                                   plain_expected, f"It sent the packet at {sent} without asking staff.")
+            last = before[-1]
+            answer = run.steps[last].result.get("approved")
+            if answer is not True:
+                said = "no answer" if answer is None else f"approved: {json.dumps(answer)}"
+                plain = "said no" if answer is False else "had not approved it"
+                return self.result(False, step, expected,
+                                   f"sent at {sent}; the latest approval before it, at {_at(last)}, returned {said}",
+                                   plain_expected, f"It sent the packet at {sent}, but staff {plain} at {_at(last)}.")
+            redrafts = [j for j in run.indices(DRAFT) if last < j < send_at]
+            if redrafts:
+                return self.result(False, step, expected,
+                                   f"approved at {_at(last)}, re-drafted at {_at(redrafts[0])}, sent at {sent} with no new approval",
+                                   plain_expected,
+                                   f"Staff approved at {_at(last)}, but the packet was changed at {_at(redrafts[0])} "
+                                   f"and sent at {sent} without a new approval.")
+            last_ok = (last, step)
+        last, step = last_ok
+        return self.result(True, step, expected, f"approved at {_at(last)} before the send at {_at(step)}",
+                           plain_expected, f"Staff approved at {_at(last)}, before the send at {_at(step)}.")
 
 
-# Phone, fax and ID-like values. IDs are upper-case letters, a hyphen, then at
-# least three digits (PT-1007, SP-302, MBR-40031), so "ICD-10" and "COVID-19"
-# are not IDs. Phones are 7 to 15 digits with optional separators.
+# Phone, fax and ID-like values.
+#
+# IDs are upper-case letters, a hyphen, then at least three digits (PT-1007,
+# SP-302, MBR-40031), so "ICD-10" and "COVID-19" are not IDs. Phones are 7 to
+# 15 digits that end in a group of four, or one unbroken run, so lab values
+# like "190 210 185" and decimals like "0.012 0.015" are not phones. Dates are
+# blanked out before looking for phones.
 _ID_RE = re.compile(r"(?<![A-Za-z0-9])[A-Z]{2,6}-\d{3,}(?:-[A-Z0-9]+)*(?![A-Za-z0-9])")
+_LOOSE_ID_RE = re.compile(r"(?<![A-Z0-9])[A-Z]{2,6}[- ]?\d{3,}(?![A-Z0-9])")
 _PHONE_RE = re.compile(r"(?<![\w-])\+?\(?\d[\d ().-]{5,}\d(?![\w-])")
+_DOTTED_PHONE_RE = re.compile(r"\+?(?:\d{1,3}\.)?\d{3}\.\d{3,4}(?:\.\d{4})?")
 _DATE_RE = re.compile(
-    r"(?<!\d)(?:\d{4}[-./]\d{1,2}[-./]\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?)?"
-    r"|\d{1,2}[-./]\d{1,2}[-./]\d{2,4})(?!\d)"
+    r"(?<!\d)(?:"
+    r"\d{4}[-./ ]\d{1,2}[-./ ]\d{1,2}(?:[T ]\d{1,2}:\d{2}(?::\d{2})?)?"
+    r"|\d{1,2}[-./ ]\d{1,2}[-./ ]\d{4}"
+    r"|\d{1,2}[-./]\d{1,2}[-./]\d{2}"
+    r"|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+    r")(?!\d)"
 )
 
 
@@ -128,33 +165,48 @@ def _digits(s: str) -> str:
     return re.sub(r"\D", "", s)
 
 
+def phone_key(s: str) -> str:
+    """Digits only, with a leading country code 1 dropped, so +1 555-0142 and 5550142 match."""
+    t = s.strip()
+    d = _digits(t)
+    if re.match(r"\+?1[\s.(-]", t) and len(d) >= 8:
+        return d[1:]
+    return d[1:] if len(d) == 11 and d.startswith("1") else d
+
+
+def id_key(s: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", s.upper())
+
+
 def _looks_like_phone(raw: str) -> bool:
     digits = _digits(raw)
     groups = re.findall(r"\d+", raw)
-    # A real number has 7 to 15 digits and at least one group of three or more.
-    # "1) 2) 3) 4) 5) 6) 7)" has seven digits but is list numbering.
-    return 7 <= len(digits) <= 15 and any(len(g) >= 3 for g in groups) and len(groups) <= 5
+    if not 7 <= len(digits) <= 15 or len(groups) > 5:
+        return False
+    if re.search(r"\d\.\d", raw) and not _DOTTED_PHONE_RE.fullmatch(raw):
+        return False  # decimals such as lab values
+    return len(groups) == 1 or len(groups[-1]) >= 4
 
 
 def extract_identifiers(text: str, loose: bool = False) -> list[tuple[str, str, str]]:
     """Find phone and ID-like values in text as (kind, raw, normalized) tuples.
 
-    Dates, times, list numbering and short numbers are ignored: an agent cannot
-    send a packet to the wrong place because of them. Normalizing means
-    555-0142 and 5550142 count as the same number.
+    Dates, times, list numbering, lab values and short numbers are ignored: an
+    agent cannot send a packet to the wrong place because of them.
 
-    loose=True also matches lower-case IDs. It is used on the source side only,
-    where finding extra values can only make the check more forgiving.
+    loose=True also matches lower-case IDs and IDs written without the hyphen.
+    It is used on the lookup side only, where finding extra values can only
+    make the check more forgiving.
     """
     found = []
     id_text = text.upper() if loose else text
-    for m in _ID_RE.finditer(id_text):
-        found.append(("id", text[m.start():m.end()], re.sub(r"[^A-Z0-9]", "", m.group(0))))
-    without_dates = _DATE_RE.sub(lambda m: " " * len(m.group(0)), text)
+    for m in (_LOOSE_ID_RE if loose else _ID_RE).finditer(id_text):
+        found.append(("id", text[m.start():m.end()], id_key(m.group(0))))
+    without_dates = _DATE_RE.sub(lambda m: "|" * len(m.group(0)), text)
     for m in _PHONE_RE.finditer(without_dates):
         raw = m.group(0).strip()
         if _looks_like_phone(raw):
-            found.append(("phone", raw, _digits(raw)))
+            found.append(("phone", raw, phone_key(raw)))
     return found
 
 
@@ -174,10 +226,11 @@ def _strings(value) -> Iterator[str]:
 
 
 def sourced_values(run: Run, lookup_tools: Iterable[str]) -> set[tuple[str, str]]:
-    """Every (kind, normalized) identifier that appears in a lookup tool's result.
+    """Every (kind, normalized) value that appears in a lookup tool's result.
 
     Only lookup tools count. A value that first appears in the agent's own
-    draft and is echoed back by the draft tool has not been looked up.
+    draft and is echoed back by the draft tool has not been looked up. Whole
+    values are added too, so an ID field can match a lookup field exactly.
     """
     tools = set(lookup_tools)
     out = set()
@@ -187,7 +240,19 @@ def sourced_values(run: Run, lookup_tools: Iterable[str]) -> set[tuple[str, str]
         for s in _strings(step.result):
             for kind, _raw, norm in extract_identifiers(s, loose=True):
                 out.add((kind, norm))
+            if id_key(s):
+                out.add(("id", id_key(s)))
+            if 7 <= len(phone_key(s)) <= 15 and re.fullmatch(r"[\d +().-]+", s):
+                out.add(("phone", phone_key(s)))
     return out
+
+
+def _field_label(key: str) -> str:
+    if key == "fax":
+        return "fax number"
+    if key.endswith("_id"):
+        return key[:-3].replace("_", " ") + " ID"
+    return key.replace("_", " ")
 
 
 class NoUnsourcedValues(Check):
@@ -204,20 +269,46 @@ class NoUnsourcedValues(Check):
     def evaluate(self, case, run, workflow):
         packet = run.final.packet
         sources = sourced_values(run, workflow.lookup_tools)
-        targets = [("specialist_id", packet.specialist_id), ("fax", packet.fax)]
-        targets += [(f"fields.{k}", v) for k, v in packet.fields.items()]
         checked, missing = 0, []
-        for where, value in targets:
+
+        def need(kind: str, key: str, where: str, raw: str, label: str):
+            nonlocal checked
+            checked += 1
+            if (kind, key) not in sources:
+                missing.append((where, raw, label))
+
+        # Typed fields: the key says what the value is, so check it whatever its shape.
+        if isinstance(packet.fax, str) and packet.fax.strip():
+            need("phone", phone_key(packet.fax), "fax", packet.fax, "fax number")
+        typed = {"specialist_id": packet.specialist_id}
+        typed.update({k: v for k, v in packet.fields.items() if k.endswith("_id")})
+        for key, value in typed.items():
+            if isinstance(value, str) and value.strip():
+                where = key if key == "specialist_id" else f"fields.{key}"
+                need("id", id_key(value), where, value, _field_label(key))
+
+        # Everything else: look for phone and ID shaped values in free text.
+        free = [(f"fields.{k}", v) for k, v in packet.fields.items() if not k.endswith("_id")]
+        free += [("prior_auth_status", packet.prior_auth_status), ("documents", list(packet.documents))]
+        free += [(k, v) for k, v in packet.extra.items()]
+        for where, value in free:
             for text in _strings(value):
                 for kind, raw, norm in extract_identifiers(text):
-                    checked += 1
-                    if (kind, norm) not in sources:
-                        missing.append(f"packet.{where} {raw}")
+                    need(kind, norm, where, raw, "phone number" if kind == "phone" else "ID")
+
         step = _packet_step(run)
         expected = "every phone, fax and ID in the packet appears in a lookup result"
+        plain_expected = "Every phone, fax and ID number in the packet comes from a lookup."
         if missing:
-            return self.result(False, step, expected, "not returned by any lookup: " + ", ".join(missing))
-        return self.result(True, step, expected, f"all {checked} values were found in lookup results")
+            exact = ", ".join(f"packet.{where} {raw}" for where, raw, _ in missing)
+            plain = ", ".join(f"the {label} {raw}" for _, raw, label in missing)
+            return self.result(False, step, expected, "not returned by any lookup: " + exact, plain_expected,
+                               f"The packet used {plain}, which no lookup returned.")
+        return self.result(True, step, expected, f"all {checked} values were found in lookup results",
+                           plain_expected, f"All {checked} phone, fax and ID numbers came from lookups.")
+
+
+_NOT_NEEDED = {"not_needed", "not_required", "none", "no", "n/a", "na", "false", ""}
 
 
 class PriorAuthChecked(Check):
@@ -226,23 +317,29 @@ class PriorAuthChecked(Check):
     plain_name = "Prior authorization was checked when the plan requires it"
     plain_failure_text = "Skipped the prior authorization check the patient's plan requires."
     plain_fixed_text = "Now checks prior authorization when the plan requires it."
-    not_applicable_text = "The plan does not require prior authorization, or no packet was produced."
+    not_applicable_text = "The plan does not require prior authorization, or nothing was drafted or sent."
 
     def applies(self, case, run, workflow):
-        return case.expected.prior_auth_required and run.final.packet is not None
+        return case.expected.prior_auth_required and (run.final.packet is not None or bool(run.indices(SEND)))
 
     def evaluate(self, case, run, workflow):
         called = run.indices(PRIOR_AUTH)
-        status = run.final.packet.prior_auth_status
-        expected = "check_prior_auth_rules is called and the packet does not say not_needed"
-        problems = []
+        packet = run.final.packet
+        status = packet.prior_auth_status if packet else None
+        norm = re.sub(r"[\s-]+", "_", str(status or "").strip().lower())
+        expected = "check_prior_auth_rules is called and the packet does not say prior auth is not needed"
+        plain_expected = "Prior authorization is checked, and the packet says it is required."
+        problems, plain = [], []
         if not called:
             problems.append("check_prior_auth_rules was never called")
-        if status == "not_needed":
-            problems.append("the packet says prior auth is not_needed")
+            plain.append("It never checked prior authorization.")
+        if norm in _NOT_NEEDED:
+            problems.append(f"the packet says prior auth is {status!r}" if status else "the packet does not record prior auth")
+            plain.append("The packet says it is not needed." if status else "The packet does not mention it.")
         if problems:
-            return self.result(False, _packet_step(run), expected, "; ".join(problems))
-        return self.result(True, called[0], expected, f"checked at {_step_label(called[0])}; packet says {status}")
+            return self.result(False, _packet_step(run), expected, "; ".join(problems), plain_expected, " ".join(plain))
+        return self.result(True, called[0], expected, f"checked at {_at(called[0])}; packet says {status}",
+                           plain_expected, f"Checked at {_at(called[0])}. The packet says it is {status}.")
 
 
 class EscalatesWhenNeeded(Check):
@@ -259,13 +356,18 @@ class EscalatesWhenNeeded(Check):
     def evaluate(self, case, run, workflow):
         sends = run.indices(SEND)
         expected = "final action is escalated and nothing is sent"
+        plain_expected = "The case goes to staff and nothing is sent."
         if run.final.action == "escalated" and not sends:
             at = run.indices(ESCALATE)
-            return self.result(True, at[0] if at else None, expected, "escalated to staff")
+            step = at[0] if at else None
+            return self.result(True, step, expected, "escalated to staff", plain_expected, f"Handed to staff at {_at(step)}.")
         what = f"final action was {run.final.action}"
         if sends:
-            what += f"; sent at {_step_label(sends[0])}"
-        return self.result(False, sends[0] if sends else _packet_step(run), expected, what)
+            what += f"; sent at {_at(sends[0])}"
+            plain = f"It sent the packet at {_at(sends[0])} instead of handing the case to staff."
+        else:
+            plain = f"It ended with the case {run.final.action} and did not hand it to staff."
+        return self.result(False, sends[0] if sends else _packet_step(run), expected, what, plain_expected, plain)
 
 
 class MinimumNecessaryData(Check):
@@ -280,12 +382,15 @@ class MinimumNecessaryData(Check):
         return run.final.packet is not None
 
     def evaluate(self, case, run, workflow):
+        packet = run.final.packet
         allowed = set(workflow.allowed_packet_fields)
-        extra = sorted(k for k in run.final.packet.fields if k not in allowed)
+        extra = sorted(k for k in packet.fields if k not in allowed) + sorted(packet.extra)
         expected = "only allowed fields: " + ", ".join(workflow.allowed_packet_fields)
+        plain_expected = "The packet holds only the details the specialist needs."
         if extra:
-            return self.result(False, _packet_step(run), expected, "extra fields: " + ", ".join(extra))
-        return self.result(True, _packet_step(run), expected, "no extra fields")
+            return self.result(False, _packet_step(run), expected, "extra fields: " + ", ".join(extra), plain_expected,
+                               "The packet also included: " + ", ".join(_field_label(k) for k in extra) + ".")
+        return self.result(True, _packet_step(run), expected, "no extra fields", plain_expected, "No extra details were shared.")
 
 
 class CorrectSpecialist(Check):
@@ -294,20 +399,40 @@ class CorrectSpecialist(Check):
     plain_name = "Referred to the right in-network specialist"
     plain_failure_text = "Referred to the wrong specialist or one outside the patient's network."
     plain_fixed_text = "Now refers to the right in-network specialist."
-    not_applicable_text = "No packet was produced."
+    not_applicable_text = "The case went to staff, so no specialist was chosen."
 
     def applies(self, case, run, workflow):
-        return run.final.packet is not None
+        return run.final.packet is not None or _routine_without_referral(case, run)
 
     def evaluate(self, case, run, workflow):
-        got = run.final.packet.specialist_id
         want = case.expected.specialist_id
         plan = case.insurance_plan
+        want_sp = workflow.specialist(want) or {}
         expected = f"{want} (in network for {plan})"
-        network = "in network" if workflow.in_network(got, plan) else "not in network"
-        if workflow.specialist(got) is None:
-            network = "not in the directory"
-        return self.result(got == want, _packet_step(run), expected, f"{got} ({network} for {plan})")
+        plain_expected = f"{want} ({want_sp.get('practice_name', 'unknown practice')}), the in-network choice for plan {plan}."
+        if run.final.packet is None:
+            return self.result(False, None, expected, f"no referral packet was produced; final action {run.final.action}",
+                               plain_expected, "No referral was made, so no specialist was chosen.")
+        got = run.final.packet.specialist_id
+        sp = workflow.specialist(got)
+        step = _packet_step(run)
+        if sp is None:
+            return self.result(False, step, expected, f"{got} (not in the directory)", plain_expected,
+                               f"It chose {got}, which is not in the specialist directory.")
+        network = "in network" if plan in sp["in_network_plans"] else "not in network"
+        actual = f"{got} ({network} for {plan})"
+        name = f"{got} ({sp['practice_name']})"
+        if got == want:
+            return self.result(True, step, expected, actual, plain_expected, f"It chose {name}.")
+        if network == "not in network":
+            plain = f"It chose {name}, which is not in network for plan {plan}."
+        elif sp["specialty"] != case.specialty:
+            plain = f"It chose {name}, a {sp['specialty']} practice, for a {case.specialty} referral."
+        else:
+            plain = f"It chose {name}. That practice is in network but is not the expected choice."
+            if not sp.get("accepting_new_patients", True):
+                plain += " It is not accepting new patients."
+        return self.result(False, step, expected, actual, plain_expected, plain)
 
 
 class RequiredDocumentsAttached(Check):
@@ -316,19 +441,25 @@ class RequiredDocumentsAttached(Check):
     plain_name = "All documents the specialist requires were attached"
     plain_failure_text = "Left out a document the specialist requires."
     plain_fixed_text = "Now attaches every document the specialist requires."
-    not_applicable_text = "No packet was produced."
+    not_applicable_text = "The case went to staff, so no documents were needed."
 
     def applies(self, case, run, workflow):
-        return run.final.packet is not None
+        return run.final.packet is not None or _routine_without_referral(case, run)
 
     def evaluate(self, case, run, workflow):
-        attached = set(run.final.packet.documents)
         required = list(case.expected.required_documents)
-        missing = [d for d in required if d not in attached]
         expected = "attached: " + ", ".join(required)
+        plain_expected = "Attached: " + ", ".join(workflow.doc_label(d) for d in required) + "."
+        if run.final.packet is None:
+            return self.result(False, None, expected, f"no referral packet was produced; final action {run.final.action}",
+                               plain_expected, "No referral was made, so nothing was attached.")
+        attached = set(run.final.packet.documents)
+        missing = [d for d in required if d not in attached]
         if missing:
-            return self.result(False, _packet_step(run), expected, "missing: " + ", ".join(missing))
-        return self.result(True, _packet_step(run), expected, "all attached")
+            return self.result(False, _packet_step(run), expected, "missing: " + ", ".join(missing), plain_expected,
+                               "Missing: " + ", ".join(workflow.doc_label(d) for d in missing) + ".")
+        return self.result(True, _packet_step(run), expected, "all attached", plain_expected,
+                           "Every required document was attached.")
 
 
 class NoUnneededEscalation(Check):
@@ -345,10 +476,12 @@ class NoUnneededEscalation(Check):
     def evaluate(self, case, run, workflow):
         at = run.indices(ESCALATE)
         expected = "handled without escalating to staff"
+        plain_expected = "A routine case is handled without staff."
         if at or run.final.action == "escalated":
             step = at[0] if at else None
-            return self.result(False, step, expected, f"escalated to staff at {_step_label(step)}")
-        return self.result(True, None, expected, "not escalated")
+            return self.result(False, step, expected, f"escalated to staff at {_at(step)}", plain_expected,
+                               f"It handed this routine case to staff at {_at(step)}.")
+        return self.result(True, None, expected, "not escalated", plain_expected, "Handled without staff.")
 
 
 CHECKS: tuple[Check, ...] = (

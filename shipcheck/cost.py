@@ -25,13 +25,21 @@ class RateCard:
 
     @classmethod
     def from_dict(cls, d: dict, fallback_label: str = "UNLABELLED RATES") -> "RateCard":
+        if not isinstance(d, dict) or not isinstance(d.get("models"), dict) or not d["models"]:
+            raise ValueError("a rate card needs a 'models' object, for example {\"small-model\": {\"input\": 1.5, \"output\": 4.5}}")
+        models = {}
+        for name, rate in d["models"].items():
+            try:
+                models[name] = {"input": float(rate["input"]), "output": float(rate["output"])}
+            except (KeyError, TypeError, ValueError):
+                raise ValueError(f"rate card model {name!r} needs numeric 'input' and 'output' rates") from None
         return cls(
             label=d.get("label") or fallback_label,
             source=d.get("source", "not stated"),
             as_of=d.get("as_of", "not stated"),
             currency=d.get("currency", "USD"),
             per_tokens=int(d.get("per_tokens", 1_000_000)),
-            models={k: {"input": float(v["input"]), "output": float(v["output"])} for k, v in d["models"].items()},
+            models=models,
         )
 
     def to_dict(self) -> dict:
@@ -52,7 +60,10 @@ class RateCard:
 def load_rate_card(path: str | Path | None) -> RateCard | None:
     if not path:
         return None
-    return RateCard.from_dict(read_json(path), fallback_label=f"RATES FROM {Path(path).name}")
+    try:
+        return RateCard.from_dict(read_json(path), fallback_label=f"RATES FROM {Path(path).name}")
+    except ValueError as err:
+        raise ValueError(f"{path}: {err}") from None
 
 
 def usage_totals(runs: Iterable[Run]) -> dict[str, float]:
